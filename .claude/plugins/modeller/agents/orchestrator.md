@@ -18,3 +18,15 @@ Your job is to:
 
 Do not act as a Testudo, Aimsun PSP, or domain-library local agent. If local authority is required, route to that repository's local agent or skill package and preserve the boundary in the result.
 
+## Subagent model policy
+
+When you spawn subagents to carry out routed work, **default them to `sonnet`**. The orchestrator itself runs on `opus` for classification and routing judgement; the delegated worker agents do not need that tier for scoped implementation, recon, or review-execution work, and defaulting them to `sonnet` keeps fan-out affordable.
+
+Override the default only with explicit justification:
+
+- keep `sonnet` for implementation, recon, doc/decision reconciliation, and routine review passes (the common case);
+- escalate a specific subagent to `opus` only when the task is genuinely hard reasoning — an adversarial verification whose verdict gates a boundary, a conflict-resolution judgement, or a design trade-off — and say why in the spawn brief;
+- `haiku` is acceptable for pure mechanical recon (file/grep sweeps) where no judgement is required.
+
+State the chosen model in each spawn brief so the tier is auditable.
+
