@@ -258,11 +258,27 @@ class ReferencePackTests(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertTrue(any("superseded" in error for error in result.errors), result.errors)
 
-    def test_live_accessibility_pack_conforms_to_vault_export(self) -> None:
+    def test_live_accessibility_pack_rejected_while_domain_deactivated(self) -> None:
+        # F-A: domain routability deactivated (registry draft/routable:false);
+        # revert this expectation when routability is restored after 0010
+        # general-scope acceptance + DR-1 cure. This test used to assert the
+        # live accessibility pack CONFORMS (result.ok / status "active"). With
+        # the vault domain export now marking accessibility not active/routable,
+        # the pack MUST fail validation with the deactivation error (and the
+        # digest mismatch that follows from the regenerated export).
         result = validate_knowledge_pack(ROOT, "reference-packs/domains/accessibility.toml")
 
-        self.assertTrue(result.ok, result.errors)
-        self.assertEqual(result.status, "active")
+        self.assertFalse(result.ok, result.errors)
+        self.assertTrue(
+            any("is not active/routable in vault export" in e for e in result.errors),
+            result.errors,
+        )
+        # Digest was regenerated to match the deactivated registry, so the pack
+        # (pinned to the pre-deactivation export) also reports a digest mismatch.
+        self.assertTrue(
+            any("source_domains_digest does not match current vault domain export" in e for e in result.errors),
+            result.errors,
+        )
 
     def test_shared_eligibility_conformance_fixture(self) -> None:
         if not SHARED_ELIGIBILITY_FIXTURE.is_file():
@@ -413,7 +429,16 @@ class ReferencePackTests(unittest.TestCase):
                 any("source_domain_notes_digest" in e for e in result.errors), result.errors
             )
 
-    def test_live_route_selects_accessibility_pack_with_provenance(self) -> None:
+    def test_live_route_does_not_select_accessibility_pack_while_deactivated(self) -> None:
+        # F-A: domain routability deactivated (registry draft/routable:false);
+        # revert this expectation when routability is restored after 0010
+        # general-scope acceptance + DR-1 cure. This test used to assert routing
+        # SELECTS the accessibility knowledge pack with provenance (ok, one
+        # knowledge_domain, one knowledge_pack). With accessibility no longer
+        # active/routable in the vault export, the knowledge axis for that
+        # domain is unavailable: routing must NOT select it, and the knowledge
+        # pack validation error surfaces on the decision. The base/repo route
+        # (target repository, skill, bundle, reference pack) still resolves.
         with tempfile.TemporaryDirectory() as tmp:
             envelope = Path(tmp) / "envelope.json"
             envelope.write_text(
@@ -432,9 +457,23 @@ class ReferencePackTests(unittest.TestCase):
 
             decision = route_envelope(ROOT, envelope)
 
-            self.assertTrue(decision.ok, decision.errors)
-            self.assertEqual(decision.knowledge_domains, [{"id": "accessibility", "source": "request"}])
-            self.assertEqual(decision.knowledge_packs, ["reference-packs/domains/accessibility.toml"])
+            # Knowledge axis is unavailable for the deactivated domain: nothing
+            # selected on either the domain or pack axis.
+            self.assertEqual(decision.knowledge_domains, [])
+            self.assertEqual(decision.knowledge_packs, [])
+            # The decision fails and carries the specific deactivation error.
+            self.assertFalse(decision.ok, decision.errors)
+            self.assertTrue(
+                any("is not active/routable in vault export" in e for e in decision.errors),
+                decision.errors,
+            )
+            # The non-knowledge (base/repo) route still resolves normally.
+            self.assertEqual(decision.target_repository, "modelling-knowledge")
+            self.assertEqual(decision.skill, "review")
+            self.assertEqual(decision.bundle, "modelling-knowledge")
+            self.assertEqual(
+                decision.reference_packs, ["reference-packs/modelling-knowledge.toml"]
+            )
 
 
 def _write_bundle_and_pack(

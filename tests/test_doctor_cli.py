@@ -31,9 +31,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DoctorCliTests(unittest.TestCase):
-    def test_doctor_accepts_current_repo(self) -> None:
+    def test_doctor_reports_deactivated_domain_on_current_repo(self) -> None:
+        # F-A: domain routability deactivated (registry draft/routable:false);
+        # revert this expectation when routability is restored after 0010
+        # general-scope acceptance + DR-1 cure. This test used to assert the
+        # doctor ACCEPTS the repo (result.ok True). The doctor now correctly
+        # treats the deactivated accessibility pilot pack as a hard error, so
+        # result.ok is False and the specific deactivation error is reported.
+        # Skill/backend discovery is unaffected and still surfaces.
         result = run_doctor(ROOT)
-        self.assertTrue(result.ok, result.format())
+        self.assertFalse(result.ok, result.format())
+        self.assertTrue(
+            any("is not active/routable in vault export" in e for e in result.errors),
+            result.errors,
+        )
         self.assertIn("workflow", result.skills)
         self.assertIn("aimsun-psp", result.backends)
 
@@ -127,26 +138,48 @@ class DoctorCliTests(unittest.TestCase):
         self.assertIn("strict readiness", output)
 
     def test_doctor_cli_json_is_machine_readable(self) -> None:
+        # F-A: domain routability deactivated (registry draft/routable:false);
+        # revert this expectation when routability is restored after 0010
+        # general-scope acceptance + DR-1 cure. The doctor now fails on the
+        # deactivated accessibility pilot pack, so the CLI exits 1 and the JSON
+        # payload has ok=False with the deactivation error. The test still
+        # verifies the output is valid, parseable JSON carrying the expected
+        # schema keys (this test's point) against the current F-A output.
         stdout = StringIO()
         with redirect_stdout(stdout):
             exit_code = main(["--root", str(ROOT), "doctor", "--json"])
-        self.assertEqual(exit_code, 0)
+        self.assertEqual(exit_code, 1)
         payload = json.loads(stdout.getvalue())
-        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["ok"])
         self.assertIn("workflow", payload["skills"])
         self.assertIn("warnings", payload)
+        self.assertIn("errors", payload)
+        self.assertTrue(
+            any("is not active/routable in vault export" in e for e in payload["errors"]),
+            payload["errors"],
+        )
 
     def test_modeller_agents_compat_cli_json_is_machine_readable(self) -> None:
+        # F-A: domain routability deactivated (registry draft/routable:false);
+        # revert this expectation when routability is restored after 0010
+        # general-scope acceptance + DR-1 cure. The compat CLI delegates to the
+        # same doctor, so under F-A it exits 1 with ok=False and the
+        # deactivation error. The test still verifies valid, parseable JSON with
+        # the expected schema keys (this test's point) against the F-A output.
         from modeller_agents.cli import main as compat_main
 
         stdout = StringIO()
         with redirect_stdout(stdout):
             exit_code = compat_main(["--root", str(ROOT), "doctor", "--json"])
 
-        self.assertEqual(exit_code, 0)
+        self.assertEqual(exit_code, 1)
         payload = json.loads(stdout.getvalue())
-        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["ok"])
         self.assertIn("workflow", payload["skills"])
+        self.assertTrue(
+            any("is not active/routable in vault export" in e for e in payload["errors"]),
+            payload["errors"],
+        )
 
     def test_doctor_cli_strict_json_returns_failure_payload(self) -> None:
         stdout = StringIO()
@@ -371,14 +404,26 @@ class DoctorCliTests(unittest.TestCase):
             mcp = json.loads(target_mcp.read_text(encoding="utf-8"))
             self.assertEqual(mcp, {"mcpServers": {}})
 
-    def test_doctor_accepts_installed_runtime_target(self) -> None:
+    def test_doctor_reports_deactivated_domain_on_installed_runtime_target(self) -> None:
+        # F-A: domain routability deactivated (registry draft/routable:false);
+        # revert this expectation when routability is restored after 0010
+        # general-scope acceptance + DR-1 cure. This test used to assert the
+        # doctor ACCEPTS a freshly installed runtime target (result.ok True).
+        # The installed runtime carries the same deactivated accessibility pilot
+        # pack, so the doctor now correctly fails with the deactivation error.
+        # Runtime asset install still yields the workflow skill and aimsun-psp
+        # backend.
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             install_plugin(ROOT, target, dry_run=False, include_runtime_assets=True)
 
             result = run_doctor(target)
 
-            self.assertTrue(result.ok, result.format())
+            self.assertFalse(result.ok, result.format())
+            self.assertTrue(
+                any("is not active/routable in vault export" in e for e in result.errors),
+                result.errors,
+            )
             self.assertIn("workflow", result.skills)
             self.assertIn("aimsun-psp", result.backends)
 
