@@ -11,6 +11,9 @@ from modeller.route import route_envelope
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE = ROOT.parent
+VAULT = WORKSPACE / "modelling-knowledge"
+SHARED_ELIGIBILITY_FIXTURE = VAULT / "docs" / "dev" / "fixtures" / "eligibility-conformance.json"
 
 
 class ReferencePackTests(unittest.TestCase):
@@ -242,6 +245,7 @@ class ReferencePackTests(unittest.TestCase):
                             "status": "active",
                             "routable": True,
                             "allowed_note_types": ["reference"],
+                            "notes_digest": "notes-1",
                         }
                     ],
                 },
@@ -257,6 +261,102 @@ class ReferencePackTests(unittest.TestCase):
 
         self.assertTrue(result.ok, result.errors)
         self.assertEqual(result.status, "active")
+
+    def test_shared_eligibility_conformance_fixture(self) -> None:
+        if not SHARED_ELIGIBILITY_FIXTURE.is_file():
+            self.skipTest("sibling modelling-knowledge shared eligibility fixture is not available")
+        index = json.loads((VAULT / "docs/dev/vault-index.json").read_text(encoding="utf-8"))
+        domains = json.loads((VAULT / "docs/dev/knowledge-domains.json").read_text(encoding="utf-8"))
+        exports = VaultExports(index=index, domains=domains)
+        domain_specs = {d["id"]: d for d in domains["domains"]}
+        fixture = json.loads(SHARED_ELIGIBILITY_FIXTURE.read_text(encoding="utf-8"))
+        for case in fixture["cases"]:
+            with self.subTest(case=case["id"]):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    _write_domain_registry(root)
+                    _write_conformance_pack(root, case, domain_specs[case["domain"]], domains["index_digest"])
+                    result = validate_knowledge_pack(
+                        root, f"reference-packs/domains/{case['domain']}.toml", exports=exports
+                    )
+                    self.assertIs(result.ok, case["expected"], result.errors)
+
+    def test_pack_currency_survives_unrelated_index_change(self) -> None:
+        # A change to the whole-index digest that leaves THIS domain's notes
+        # untouched must not invalidate the pack: currency is anchored to the
+        # per-domain notes_digest, not the whole-index digest.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_knowledge_pack(root, "accessibility", status="active", note_id="acc-note")
+            note = {
+                "id": "acc-note",
+                "domain": "accessibility",
+                "status": "accepted",
+                "exposable": True,
+                "exposure_scopes": ["internal-agent"],
+                "sensitivity": "public",
+                "type": "reference",
+            }
+            domain = {
+                "id": "accessibility",
+                "status": "active",
+                "routable": True,
+                "allowed_note_types": ["reference"],
+                "notes_digest": "notes-1",
+            }
+            # Whole-index digest differs run-to-run (unrelated notes changed),
+            # but the domain notes_digest the pack pins to is unchanged.
+            for index_digest in ("index-A", "index-B-after-unrelated-change"):
+                exports = VaultExports(
+                    index={"index_digest": index_digest, "notes": [note]},
+                    domains={"index_digest": "domains-1", "domains": [domain]},
+                )
+                result = validate_knowledge_pack(
+                    root, "reference-packs/domains/accessibility.toml", exports=exports
+                )
+                self.assertTrue(result.ok, result.errors)
+
+    def test_pack_fails_when_its_domain_notes_digest_moves(self) -> None:
+        # If the domain's own notes change, the notes_digest moves and the pack
+        # (pinned to the old digest) must fail.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_knowledge_pack(root, "accessibility", status="active", note_id="acc-note")
+            exports = VaultExports(
+                index={
+                    "index_digest": "index-1",
+                    "notes": [
+                        {
+                            "id": "acc-note",
+                            "domain": "accessibility",
+                            "status": "accepted",
+                            "exposable": True,
+                            "exposure_scopes": ["internal-agent"],
+                            "sensitivity": "public",
+                            "type": "reference",
+                        }
+                    ],
+                },
+                domains={
+                    "index_digest": "domains-1",
+                    "domains": [
+                        {
+                            "id": "accessibility",
+                            "status": "active",
+                            "routable": True,
+                            "allowed_note_types": ["reference"],
+                            "notes_digest": "notes-CHANGED",
+                        }
+                    ],
+                },
+            )
+            result = validate_knowledge_pack(
+                root, "reference-packs/domains/accessibility.toml", exports=exports
+            )
+            self.assertFalse(result.ok)
+            self.assertTrue(
+                any("source_domain_notes_digest" in e for e in result.errors), result.errors
+            )
 
     def test_live_route_selects_accessibility_pack_with_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -400,7 +500,7 @@ def _write_knowledge_pack(root: Path, domain: str, *, status: str, note_id: str 
                 f'domain = "{domain}"',
                 f'status = "{status}"',
                 'source_vault = "modelling-knowledge"',
-                'source_index_digest = "index-1"',
+                'source_domain_notes_digest = "notes-1"',
                 'source_domains_digest = "domains-1"',
                 'required_scopes = ["internal-agent"]',
                 'max_sensitivity = "internal"',
@@ -417,6 +517,42 @@ def _write_knowledge_pack(root: Path, domain: str, *, status: str, note_id: str 
                 f'id = "{note_id}"',
                 "required = true",
                 'purpose = "test"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_conformance_pack(root: Path, case: dict, domain_spec: dict, domains_digest: str) -> None:
+    domain = case["domain"]
+    domain_dir = root / "reference-packs" / "domains"
+    domain_dir.mkdir(parents=True, exist_ok=True)
+    domain_dir.joinpath(f"{domain}.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                f'id = "{domain}"',
+                'kind = "knowledge"',
+                f'domain = "{domain}"',
+                'status = "active"',
+                'source_vault = "modelling-knowledge"',
+                f'source_domain_notes_digest = "{domain_spec["notes_digest"]}"',
+                f'source_domains_digest = "{domains_digest}"',
+                f"required_scopes = {json.dumps(case['required_scopes'])}",
+                f'max_sensitivity = "{case["max_sensitivity"]}"',
+                "",
+                "[authority_context]",
+                'vault = "modelling-knowledge"',
+                'domain_registry = "registry/knowledge-domains.yml"',
+                'scope_decision = "0005-knowledge-vault-domain-scope"',
+                'knowledge_seam_decision = "0009-vault-side-knowledge-seam"',
+                'coordination_decision = "0010-typed-packs-cross-repo-coordination"',
+                'checked_at = "2026-07-12"',
+                "",
+                "[[notes]]",
+                f'id = "{case["note_id"]}"',
+                "required = true",
+                f'purpose = "{case["id"]}"',
             ]
         ),
         encoding="utf-8",

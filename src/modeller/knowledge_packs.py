@@ -313,7 +313,7 @@ def validate_knowledge_pack(root: Path, rel_path: str, exports: VaultExports | N
         "domain",
         "status",
         "source_vault",
-        "source_index_digest",
+        "source_domain_notes_digest",
         "source_domains_digest",
         "authority_context",
         "required_scopes",
@@ -391,11 +391,26 @@ def validate_knowledge_pack(root: Path, rel_path: str, exports: VaultExports | N
         check.errors.append(f"{rel_path}: active knowledge pack requires current vault exports")
         return check
     if exports.index:
-        if data.get("source_index_digest") != exports.index.get("index_digest"):
-            check.errors.append(f"{rel_path}: source_index_digest does not match current vault export")
         notes_by_id = {n.get("id"): n for n in exports.index.get("notes", [])}
         domains_by_id = {d.get("id"): d for d in exports.domains.get("domains", [])} if exports.domains else {}
         domain_spec = domains_by_id.get(check.domain)
+        # Currency is anchored to THIS domain's notes digest, not the whole-index
+        # digest: a pack must be invalidated when its own domain's notes change,
+        # but not by unrelated vault edits (e.g. an unrelated decision status
+        # change that moves the whole-index digest). Per-note validation below
+        # still re-checks every referenced note against the live index.
+        if domain_spec is not None:
+            expected_notes_digest = domain_spec.get("notes_digest")
+            if expected_notes_digest is None:
+                check.errors.append(
+                    f"{rel_path}: current vault domain export carries no notes_digest for "
+                    f"{check.domain!r} (vault_doctor too old?)"
+                )
+            elif data.get("source_domain_notes_digest") != expected_notes_digest:
+                check.errors.append(
+                    f"{rel_path}: source_domain_notes_digest does not match current vault "
+                    f"export for domain {check.domain!r}"
+                )
         if check.status == "active":
             if not domain_spec:
                 check.errors.append(f"{rel_path}: domain {check.domain!r} absent from current vault domain export")

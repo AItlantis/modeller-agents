@@ -81,16 +81,13 @@ D5 already requires for knowledge packs (`typed-packs-open-decisions.md` D5 cond
 be a general workflow rule, not a pack-only one.
 
 **Observed for real at Close (2026-07-12).** When the vault decision changes (0006/0007 statuses)
-landed on the vault's `main`, the vault **index digest** moved (`bf679a17…` → `8b1c8114…`) while the
-**domains digest** stayed put (accessibility content unchanged). The `modeller-agents` D5 parity
-check then correctly failed 6 tests: `reference-packs/domains/accessibility.toml` was pinned to the
-old `source_index_digest`. The check did its job — it caught genuine cross-repo drift that no single
-repo's gate would have seen. Fix applied: the orchestrator re-pinned the pack's `source_index_digest`
-to the current export at Close and re-ran the gate (60 passed). This is the strongest argument for
-P0-2 and for making export-currency an explicit Close-phase step: **a whole-index digest couples
-every pack to unrelated vault edits.** Follow-up worth considering — scope the pack's parity to the
-digest of *its own domain's notes* (the stable `source_domains_digest` already exists and did not
-move) so unrelated decision edits don't invalidate every pack.
+landed on the vault's `main`, the vault **index digest** moved while accessibility content was
+unchanged. The first parity implementation pinned the accessibility pack to the whole-index digest,
+so unrelated decision edits invalidated the pack. Follow-up work replaced that coupling with
+`source_domain_notes_digest`, emitted in `knowledge-domains.json` as a per-domain digest over the
+domain's exported note entries, while `source_domains_digest` still pins the registry/export shape.
+Two new tests prove the intended behavior: unrelated whole-index digest changes leave the pack valid,
+and changes to the domain's own note digest fail the pack. The gate now passes with 62 tests.
 
 ### P1-1 — Codified orchestration protocol: phase→tier + orchestrator-owns-git (implemented this pass)
 
