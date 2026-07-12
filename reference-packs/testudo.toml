@@ -1,0 +1,16 @@
+id = "testudo"
+status = "draft"
+source_repository = "testudo"
+owner = "testudo"
+
+central_skills = [
+  "workflow",
+  "orchestrate",
+  "source-boundary-check",
+  "antagonist-review",
+  "review",
+  "memory-recon"
+]
+
+local_agents_stay_in_source = true
+notes = "Testudo owns product cockpit, UI, permissions, visual context, task status, and product audit."

@@ -1,0 +1,33 @@
+schema_version: 0.1
+owner: modeller-agents
+status: scaffold
+
+skills:
+  - workflow
+  - orchestrate
+  - source-boundary-check
+  - antagonist-review
+  - review
+  - memory-recon
+  - backend-contract-check
+  - backend-scaffold
+  - backend-align
+  - pipeline-fix
+  - pipeline-review
+  - pipeline-smoke
+
+bundles:
+  - id: testudo
+    path: bundles/testudo.bundle.json
+  - id: aimsun-psp
+    path: bundles/aimsun-psp.bundle.json
+  - id: modelling-knowledge
+    path: bundles/modelling-knowledge.bundle.json
+  - id: pipeline-backend
+    path: bundles/pipeline-backend.bundle.json
+
+reference_packs:
+  - reference-packs/testudo.toml
+  - reference-packs/aimsun-psp.toml
+  - reference-packs/modelling-knowledge.toml
+  - reference-packs/modeller-pipelines.toml

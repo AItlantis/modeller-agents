@@ -1,0 +1,105 @@
+{
+  "schema_version": "0.1",
+  "workflow_id": "modeller-agents-build",
+  "name": "Modeller Agents Build Workflow",
+  "description": "Deterministic artifact-gated workflow for building modeller-agents structure, tooling, and skill orchestration.",
+  "artifact_root": ".modeller/runs/{run_id}/artifacts",
+  "state_path": ".modeller/runs/{run_id}/state.json",
+  "artifacts": {
+    "brief": "brief.md",
+    "prd": "prd.md",
+    "backlog": "backlog.md",
+    "decisions": "decisions.md",
+    "skills": "skills.md",
+    "agents": "agents.md",
+    "memory": "memory.md",
+    "implementation": "implementation.md",
+    "documentation": "documentation.md",
+    "handoff": "handoff.md"
+  },
+  "artifact_requirements": {
+    "brief": {
+      "required_terms": ["outcome", "scope", "source-of-truth", "source-boundary", "constraints", "acceptance evidence"]
+    },
+    "prd": {
+      "required_terms": ["requirements", "acceptance", "non-goals"]
+    },
+    "backlog": {
+      "required_terms": ["priority", "story", "verification"]
+    },
+    "decisions": {
+      "required_terms": ["accepted", "rejected", "pending", "boundary"]
+    },
+    "skills": {
+      "required_terms": ["skill", "trigger", "verification"]
+    },
+    "agents": {
+      "required_terms": ["agent", "authority", "scope"]
+    },
+    "memory": {
+      "required_terms": ["memory", "source", "retrieval"]
+    },
+    "implementation": {
+      "required_terms": ["changed files", "commands run", "unresolved gaps"]
+    },
+    "documentation": {
+      "required_terms": ["updated docs", "runbook"]
+    },
+    "handoff": {
+      "required_terms": ["final state", "verification", "residual risks", "next actions", "subagent findings"]
+    }
+  },
+  "steps": [
+    {
+      "id": "intake",
+      "title": "Brief And Scope",
+      "owner": "orchestrator",
+      "required_artifacts": ["brief"],
+      "exit_gate": "Brief states outcome, scope, source-of-truth repositories, constraints, and acceptance evidence."
+    },
+    {
+      "id": "requirements",
+      "title": "PRD And Decisions",
+      "owner": "planner",
+      "required_artifacts": ["prd", "decisions"],
+      "requires_agent_evidence": true,
+      "exit_gate": "PRD captures requirements and decisions captures accepted, rejected, and pending boundary choices."
+    },
+    {
+      "id": "planning",
+      "title": "Backlog",
+      "owner": "planner",
+      "required_artifacts": ["backlog"],
+      "exit_gate": "Backlog contains ordered stories with verification evidence for each story."
+    },
+    {
+      "id": "orchestration-design",
+      "title": "Skills Agents Memory",
+      "owner": "architect",
+      "required_artifacts": ["skills", "agents", "memory"],
+      "requires_agent_evidence": true,
+      "exit_gate": "Skill surfaces, local-agent boundaries, and memory behavior are specified before implementation."
+    },
+    {
+      "id": "implementation",
+      "title": "Implementation",
+      "owner": "executor",
+      "required_artifacts": ["implementation"],
+      "exit_gate": "Implementation artifact lists changed files, commands run, and unresolved gaps."
+    },
+    {
+      "id": "documentation",
+      "title": "Documentation",
+      "owner": "documenter",
+      "required_artifacts": ["documentation"],
+      "exit_gate": "Documentation artifact links updated docs and explains command/runbook changes."
+    },
+    {
+      "id": "handoff",
+      "title": "Handoff",
+      "owner": "orchestrator",
+      "required_artifacts": ["handoff"],
+      "exit_gate": "Handoff captures final state, verification, residual risks, and next actions."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": "0.1",
+  "envelope_id": "example-testudo-route",
+  "task_id": "task-example-001",
+  "workflow_state": "proposed",
+  "source": {
+    "product": "testudo",
+    "entrypoint": "chat_intent",
+    "surface": "task_panel"
+  },
+  "user": {
+    "principal_type": "user",
+    "role": "modeller",
+    "permission_scope": ["read_project"],
+    "visible_data_scope": ["project_summary"],
+    "redaction_policy": "standard"
+  },
+  "project": {
+    "project_id": "example-project"
+  },
+  "intent": {
+    "user_text": "Review this modelling task plan before execution.",
+    "requested_capability": "review",
+    "target_repository": "testudo",
+    "target_backend": null
+  },
+  "execution_policy": {
+    "consent_required": true,
+    "reversible_action": true,
+    "allowed_write_scope": [],
+    "forbidden_write_scope": ["backend_implementation"],
+    "max_risk_level": "low"
+  },
+  "expected_outputs": [
+    {
+      "type": "task_plan",
+      "destination": "testudo"
+    }
+  ]
+}
+

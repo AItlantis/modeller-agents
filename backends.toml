@@ -1,0 +1,11 @@
+schema_version = "0.1"
+
+[backend.aimsun-psp]
+status = "planned"
+required = false
+backend_id = "aimsun-psp"
+contract_family = "modeller-pipelines"
+expected_contract = "1.0"
+local_root_key = "aimsun-psp"
+plugin = "aimsun-psp-orchestrator"
+notes = "Runtime backend only. Do not vendor into this repository."

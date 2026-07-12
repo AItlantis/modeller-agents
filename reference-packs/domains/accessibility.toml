@@ -1,0 +1,48 @@
+schema_version = 1
+id = "accessibility"
+kind = "knowledge"
+domain = "accessibility"
+status = "active"
+source_vault = "modelling-knowledge"
+source_index_digest = "sha256:bf679a17b3263d7a45ce3a8639e20558be18312bca6d36e1ff6ed01c81155155"
+source_domains_digest = "sha256:46cd3268337538d14a41b3295db1c30f38ccaea2ba6c870b4e7f1885a14a8082"
+required_scopes = ["internal-agent"]
+max_sensitivity = "public"
+
+[authority_context]
+vault = "modelling-knowledge"
+domain_registry = "registry/knowledge-domains.yml"
+scope_decision = "0005-knowledge-vault-domain-scope"
+knowledge_seam_decision = "0009-vault-side-knowledge-seam"
+coordination_decision = "0010-typed-packs-cross-repo-coordination"
+checked_at = "2026-07-12"
+
+[[notes]]
+id = "accessibility-index"
+required = true
+purpose = "domain boundary and navigation"
+
+[[notes]]
+id = "accessibility-workflow"
+required = true
+purpose = "workflow framing"
+
+[[notes]]
+id = "accessibility-semantic-contracts"
+required = true
+purpose = "semantic contract review"
+
+[[notes]]
+id = "accessibility-cross-modal-aggregation"
+required = true
+purpose = "cross-modal aggregation review"
+
+[[notes]]
+id = "accessibility-calibration-and-flows"
+required = false
+purpose = "calibration and flow-estimation context"
+
+[[notes]]
+id = "accessibility-public-data-ingestion"
+required = false
+purpose = "public data ingestion context"

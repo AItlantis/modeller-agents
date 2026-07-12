@@ -1,0 +1,15 @@
+{
+  "extraKnownMarketplaces": {
+    "modeller-marketplace": {
+      "source": {
+        "source": "directory",
+        "path": ".claude/plugins/modeller"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "modeller@modeller-marketplace": true
+  },
+  "hooks": {}
+}
+

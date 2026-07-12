@@ -1,0 +1,15 @@
+{
+  "name": "modeller-marketplace",
+  "description": "Central reusable modelling-agent skills and orchestration gates for the AItlantis modelling ecosystem.",
+  "owner": {
+    "name": "AItlantis"
+  },
+  "plugins": [
+    {
+      "name": "modeller",
+      "version": "0.1.0",
+      "description": "Central reusable modelling-agent skills and orchestration gates.",
+      "source": "./"
+    }
+  ]
+}

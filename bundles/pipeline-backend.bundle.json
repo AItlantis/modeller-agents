@@ -1,0 +1,20 @@
+{
+  "id": "pipeline-backend",
+  "status": "draft",
+  "routingKeyKind": "repository-class",
+  "skills": [
+    "backend-scaffold",
+    "backend-align",
+    "pipeline-fix",
+    "pipeline-review",
+    "pipeline-smoke",
+    "source-boundary-check",
+    "backend-contract-check",
+    "review",
+    "antagonist-review",
+    "workflow"
+  ],
+  "referencePacks": [
+    "reference-packs/modeller-pipelines.toml"
+  ]
+}

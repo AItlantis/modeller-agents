@@ -1,0 +1,55 @@
+id = "modeller-pipelines"
+status = "draft"
+source_repository = "modeller-pipelines"
+owner = "modeller-pipelines"
+role = "contract-authority"
+
+central_skills = [
+  "workflow",
+  "orchestrate",
+  "memory-recon",
+  "backend-scaffold",
+  "backend-align",
+  "pipeline-fix",
+  "pipeline-review",
+  "pipeline-smoke",
+  "source-boundary-check",
+  "backend-contract-check",
+  "review",
+  "antagonist-review"
+]
+
+local_agents_stay_in_source = true
+
+[vendor]
+prefix = "vendor/modeller-pipelines"
+ref = "contract-v1.0"
+version_file = "contracts/VERSION"
+schemas_dir = "contracts/schemas"
+conformance_dir = "conformance"
+template_runner = "template/runner/minirunner.py"
+template_result_builder = "template/shared/result_builder.py"
+
+[cli_seam]
+describe = "<backend-cmd> describe [--json]"
+describe_rule = "exits 0; emits backend.json as JSON on stdout"
+run = "<backend-cmd> run <pipeline_id> --config <cfg.yml> --run-dir <dir>"
+run_exit_rule = "exit 0 iff result.json status == success; always writes result.json; final stdout line = absolute path to result.json"
+
+[result_status]
+values = ["success", "partial", "failed"]
+partial_definition = "all required steps passed; at least one optional step failed"
+
+[contract_lock]
+format = "modeller-pipelines contract-v<version> <sha>"
+location = "backend repo root"
+
+[invariants]
+minirunner_max_lines = 200
+minirunner_rule = "stdlib-only; describe + run subcommands; writes result.json as last act; final stdout line = absolute path to result.json; header 'COPY THIS FILE — never import it across repos'"
+artifact_paths = "all artifact paths in result.json must be relative to the run dir; absolute paths are a conformance failure"
+step_seam = "each step returns a result dict and never raises across the seam"
+result_builder_rule = "result_builder.py is a local copy per backend; never imported from modeller-pipelines"
+result_json_always = "run always writes result.json before exit, including on failure"
+
+notes = "modeller-pipelines is a contract authority, not an execution backend. This pack contains pointers, pins, and formats only — no schema bodies, no minirunner source, no template content. See the resolved vendor checkout for authoritative content."

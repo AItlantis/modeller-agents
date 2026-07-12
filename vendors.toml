@@ -1,0 +1,20 @@
+schema_version = "0.1"
+
+[vendor.modeller-memory]
+status = "planned"
+remote = "git@github.com:AItlantis/modeller-memory.git"
+ref = "main"
+prefix = "vendor/modeller-memory"
+pinned = ""
+squash = true
+writable = false
+
+[vendor.modeller-pipelines]
+status = "planned"
+remote = "git@github.com:AItlantis/modeller-pipelines.git"
+ref = "contract-v1.0"
+prefix = "vendor/modeller-pipelines"
+pinned = ""
+squash = true
+writable = false
+

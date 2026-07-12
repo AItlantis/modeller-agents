@@ -1,0 +1,14 @@
+{
+  "id": "modelling-knowledge",
+  "status": "draft",
+  "routingKeyKind": "repository",
+  "skills": [
+    "orchestrate",
+    "source-boundary-check",
+    "antagonist-review",
+    "review"
+  ],
+  "referencePacks": [
+    "reference-packs/modelling-knowledge.toml"
+  ]
+}

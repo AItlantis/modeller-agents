@@ -1,0 +1,39 @@
+id = "aimsun-psp"
+status = "draft"
+source_repository = "aimsun-psp"
+owner = "aimsun-psp"
+
+central_skills = [
+  "workflow",
+  "orchestrate",
+  "source-boundary-check",
+  "backend-contract-check",
+  "antagonist-review",
+  "review",
+  "memory-recon",
+  "backend-scaffold",
+  "backend-align",
+  "pipeline-fix",
+  "pipeline-review",
+  "pipeline-smoke"
+]
+
+local_agents_stay_in_source = true
+notes = "Aimsun PSP owns backend implementation and backend-local phase agents. This pack only records routing and boundary facts."
+
+
+[pipeline_facts]
+architecture = "three-layer: bootstrap / shared platform / domain"
+action_protocol = "run(model, obj, io, params) -> dict returning ActionResult-shaped dict"
+manifest = "append-only; consumers read by pipeline_id + output_key; never mutate upstream entries"
+key_pipeline = "vwe"
+smoke_pipeline = "seam_smoke"
+smoke_note = "seam_smoke is Aimsun-free and CI-safe; use it as the default for pipeline-smoke invocations"
+
+[invariants]
+main_thread = "Aimsun model/catalog/script/experiment API calls must stay on the main thread or be marshalled through main_thread_executor"
+qt_compat = "all UI code imports Qt through shared/ui/qt_compat.py; never direct PyQt5 imports"
+bootstrap_marker = "every entry point self-bootstraps via aimsun_psp/bootstrap.py before importing Qt, shared, or domain modules"
+
+[open_decisions]
+O1 = "authoritative aimsun-psp remote not confirmed; blocks backends.toml registration"

@@ -1,0 +1,5 @@
+schema_version = "0.1"
+
+[roots]
+aimsun-psp = "C:/path/to/aimsun-psp"
+

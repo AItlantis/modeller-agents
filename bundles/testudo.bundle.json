@@ -1,0 +1,16 @@
+{
+  "id": "testudo",
+  "status": "draft",
+  "routingKeyKind": "repository",
+  "skills": [
+    "workflow",
+    "orchestrate",
+    "source-boundary-check",
+    "antagonist-review",
+    "review",
+    "memory-recon"
+  ],
+  "referencePacks": [
+    "reference-packs/testudo.toml"
+  ]
+}

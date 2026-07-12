@@ -1,0 +1,15 @@
+id = "modelling-knowledge"
+status = "draft"
+source_repository = "modelling-knowledge"
+owner = "modelling-knowledge"
+
+central_skills = [
+  "orchestrate",
+  "source-boundary-check",
+  "antagonist-review",
+  "review"
+]
+
+local_agents_stay_in_source = true
+notes = "The knowledge hub owns maps, standards, decisions, inventories, inbox drafts, and accepted domain notes."
+
