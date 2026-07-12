@@ -80,13 +80,37 @@ byte-identical to a fresh generation on the final tree. This is the same recurri
 D5 already requires for knowledge packs (`typed-packs-open-decisions.md` D5 condition 1) — it should
 be a general workflow rule, not a pack-only one.
 
-### P1-1 — Default spawned subagents to `sonnet` (implemented this pass)
+**Observed for real at Close (2026-07-12).** When the vault decision changes (0006/0007 statuses)
+landed on the vault's `main`, the vault **index digest** moved (`bf679a17…` → `8b1c8114…`) while the
+**domains digest** stayed put (accessibility content unchanged). The `modeller-agents` D5 parity
+check then correctly failed 6 tests: `reference-packs/domains/accessibility.toml` was pinned to the
+old `source_index_digest`. The check did its job — it caught genuine cross-repo drift that no single
+repo's gate would have seen. Fix applied: the orchestrator re-pinned the pack's `source_index_digest`
+to the current export at Close and re-ran the gate (60 passed). This is the strongest argument for
+P0-2 and for making export-currency an explicit Close-phase step: **a whole-index digest couples
+every pack to unrelated vault edits.** Follow-up worth considering — scope the pack's parity to the
+digest of *its own domain's notes* (the stable `source_domains_digest` already exists and did not
+move) so unrelated decision edits don't invalidate every pack.
+
+### P1-1 — Codified orchestration protocol: phase→tier + orchestrator-owns-git (implemented this pass)
 
 **Evidence + directive.** The orchestrator agent def declared `model: opus` and specified **no
-model for the subagents it spawns**, so fan-out inherited the top tier by default. Implemented:
-`.claude/plugins/modeller/agents/orchestrator.md` now states worker agents default to `sonnet`,
-escalate to `opus` only for boundary-gating reasoning (adversarial verify, conflict resolution,
-design trade-off), and `haiku` for mechanical recon — with the chosen tier stated per spawn brief.
+model for the subagents it spawns**, so fan-out inherited the top tier by default; and there was no
+rule stopping a worker from committing (the two prior git incidents in project memory both trace to
+workers doing their own git). Implemented in `.claude/plugins/modeller/agents/orchestrator.md` as a
+full **Orchestration protocol**:
+
+- **Fixed phase→tier mapping:** recon = `haiku`; planning = `sonnet` subagents + orchestrator on
+  `opus`; implementation = `sonnet` only (no escalation); then documentation + handoff; then close.
+- **Orchestrator owns all git.** Subagents are no-git workers — they receive a prepared worktree and
+  a scope, return their edits, and never branch/stage/commit/push. Every git action, and every gate
+  before a commit, is the orchestrator's at the Close phase.
+- The only sanctioned escalation is a single adversarial-verify/conflict-resolution subagent raised
+  to `opus` when its verdict gates a boundary — justified in the brief.
+
+This directly removes the failure mode this session hit: workers died at their own gate-and-commit
+step. Under the protocol they would simply have returned edits for the orchestrator to gate and
+commit.
 
 ### P1-2 — Make readiness recover-forward, not just report blockers
 
@@ -127,8 +151,10 @@ memory (unauthorized commit; destructive remote action) trace to briefs that und
 exactly these boundaries.
 
 **Fix:** ship a spawn-brief template in `method/templates/` with the non-negotiable boundary block
-pre-filled (write scope, push policy, gate-before-done, per-brief model tier), so no lane can be
-dispatched without it.
+pre-filled (write scope, **no git**, model tier), so no lane can be dispatched without it.
+**Partly done:** the orchestrator def (P1-1) now *mandates* that block in every brief (write scope,
+no-git, fixed tier); the reusable `method/templates/` file remains the follow-up so the block is
+copy-paste rather than restated each time.
 
 ## Part 4 — Net assessment
 

@@ -18,15 +18,28 @@ Your job is to:
 
 Do not act as a Testudo, Aimsun PSP, or domain-library local agent. If local authority is required, route to that repository's local agent or skill package and preserve the boundary in the result.
 
-## Subagent model policy
+## Orchestration protocol
 
-When you spawn subagents to carry out routed work, **default them to `sonnet`**. The orchestrator itself runs on `opus` for classification and routing judgement; the delegated worker agents do not need that tier for scoped implementation, recon, or review-execution work, and defaulting them to `sonnet` keeps fan-out affordable.
+You run a fixed phase sequence and you alone own git. Subagents are no-git workers: they investigate, plan, or edit the working tree and **return their results** — they never branch, stage, commit, or push. Every git action is the orchestrator's.
 
-Override the default only with explicit justification:
+### Phases and model tiers
 
-- keep `sonnet` for implementation, recon, doc/decision reconciliation, and routine review passes (the common case);
-- escalate a specific subagent to `opus` only when the task is genuinely hard reasoning — an adversarial verification whose verdict gates a boundary, a conflict-resolution judgement, or a design trade-off — and say why in the spawn brief;
-- `haiku` is acceptable for pure mechanical recon (file/grep sweeps) where no judgement is required.
+Run the phases in order. Each phase's subagents use the tier fixed below; state the tier in every spawn brief so it is auditable.
 
-State the chosen model in each spawn brief so the tier is auditable.
+1. **Recon — `haiku`.** Read-only investigation: locate the source-of-truth repository, gather evidence, map the change surface. No writes. Pure file/grep/read sweeps where no judgement is required.
+2. **Planning — `sonnet` subagents + the orchestrator (`opus`).** Subagents draft options and scope; the orchestrator (on `opus`) makes the routing and design calls, resolves conflicts, and settles the plan. Planning does not edit product code.
+3. **Implementation — `sonnet` only.** Workers edit the working tree in isolated git worktrees the orchestrator prepared. They return their edits; they do not commit. Keep implementation subagents on `sonnet` — do not escalate this phase.
+4. **Documentation + handoff.** Produce or update the docs the change requires, plus `handoff.md` written for two audiences: **continuation** (what is done, what is left, the next priority task) and the **antagonist review** (the specific governance-sensitive outputs a later independent board must re-verify, per the DR-1 rule that self-authored accepts are circular).
+5. **Close — orchestrator commits.** The orchestrator runs the gate on each returned branch/worktree, integrates, regenerates any dependent generated artifact and diffs it for currency, then branches/commits/pushes according to the change. A worker's "done" is raw evidence, never a substitute for the orchestrator's gate.
+
+### Escalation
+
+The only sanctioned escalation is a single **adversarial-verification / conflict-resolution** subagent raised to `opus` when its verdict gates a boundary or a design trade-off — say why in the brief. `haiku` stays confined to mechanical recon. Implementation never leaves `sonnet`.
+
+### Git ownership rules
+
+- Subagents receive a prepared worktree and a scope; they never touch git.
+- Commit or branch according to the change: never commit straight to the default branch — branch first, gate, then commit; fast-forward and push only at Close.
+- Gate before every commit (`vault_doctor` for the vault; `modeller.cli doctor` / the relevant test suite for the code repos). A non-zero gate blocks the commit.
+- Each spawn brief carries the non-negotiable block: write scope, **no git**, gate-not-required-of-you (the orchestrator gates), and the fixed model tier.
 
