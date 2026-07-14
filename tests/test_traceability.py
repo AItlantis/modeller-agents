@@ -64,6 +64,48 @@ class TraceabilityTests(unittest.TestCase):
             returned_edits = next(check for check in gate["checks"] if check["id"] == "returned_edits_evidence")
             self.assertFalse(returned_edits["ok"], returned_edits)
 
+    def test_close_gate_requires_context_receipt_when_envelope_expected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["orchestrate"])
+            init_workflow(root, "run-receipt-required")
+            _complete_full_workflow(root, "run-receipt-required")
+            _mark_context_receipt_expected(root, "run-receipt-required")
+
+            gate = evaluate_close_gate(root, "run-receipt-required")
+
+            self.assertFalse(gate["ok"], gate)
+            self.assertTrue(any("ContextReceipt is required" in error for error in gate["errors"]), gate)
+            receipt_check = next(check for check in gate["checks"] if check["id"] == "context_receipt_presence")
+            self.assertFalse(receipt_check["ok"], receipt_check)
+
+    def test_close_gate_accepts_expected_envelope_when_receipt_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["orchestrate"])
+            envelope = _write_envelope(root, "orchestrate", run_id="run-receipt-present")
+            init_workflow(root, "run-receipt-present")
+            _complete_full_workflow(root, "run-receipt-present")
+            _mark_context_receipt_expected(root, "run-receipt-present")
+
+            manifest = build_run_manifest(root, "run-receipt-present", envelope_path=envelope)
+
+            self.assertTrue(manifest["gates"]["close"]["ok"], manifest["gates"]["close"])
+            self.assertEqual(len(manifest["context_receipts"]), 1)
+
+    def test_close_gate_requires_final_parity_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            init_workflow(root, "run-no-parity")
+            _complete_full_workflow(root, "run-no-parity", final_parity=False)
+
+            gate = evaluate_close_gate(root, "run-no-parity")
+
+            self.assertFalse(gate["ok"], gate)
+            self.assertTrue(any("final parity evidence" in error for error in gate["errors"]), gate)
+            parity_check = next(check for check in gate["checks"] if check["id"] == "final_parity_evidence")
+            self.assertFalse(parity_check["ok"], parity_check)
+
     def test_workflow_close_cli_writes_manifest_and_returns_gate_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_minimal_workflow_root(Path(tmp))
@@ -160,7 +202,14 @@ def _write_envelope(root: Path, requested_capability: str, run_id: str) -> Path:
     return envelope
 
 
-def _complete_full_workflow(root: Path, run_id: str) -> None:
+def _mark_context_receipt_expected(root: Path, run_id: str) -> None:
+    state_path = root / ".modeller" / "runs" / run_id / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["context_receipt_expected"] = True
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
+def _complete_full_workflow(root: Path, run_id: str, *, final_parity: bool = True) -> None:
     workflow = load_workflow(root)
     payloads = {
         "brief": (
@@ -217,7 +266,21 @@ def _complete_full_workflow(root: Path, run_id: str) -> None:
     for step in workflow["steps"]:
         for artifact in step["required_artifacts"]:
             owner, evidence, output = payloads[artifact]
-            complete_artifact(root=root, run_id=run_id, artifact=artifact, updated_by=owner, evidence=evidence, output=output)
+            verification = None
+            if artifact == "handoff" and final_parity:
+                verification = (
+                    "Verification: final parity evidence was checked against the final tree; "
+                    "residual risks, next actions, and subagent findings remain recorded."
+                )
+            complete_artifact(
+                root=root,
+                run_id=run_id,
+                artifact=artifact,
+                updated_by=owner,
+                evidence=evidence,
+                output=output,
+                verification=verification,
+            )
         gate = advance_workflow(root, run_id)
         if not gate.ok:
             raise AssertionError(gate.errors)

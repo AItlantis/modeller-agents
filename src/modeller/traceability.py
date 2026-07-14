@@ -9,6 +9,7 @@ from pathlib import Path
 from .workflow import (
     DEFAULT_WORKFLOW,
     _artifact_step,
+    _section,
     _state_path,
     _validate_artifact,
     _validate_run_id,
@@ -107,11 +108,11 @@ def build_run_manifest(
         kind="workflow-definition",
     )
     artifact_refs = _workflow_artifact_refs(root, workflow, run_id)
-    gate = check_current_step(root, run_id, workflow_id)
-    close_gate = evaluate_close_gate(root, run_id, workflow_id=workflow_id)
     context_receipts = []
     if envelope_path is not None:
         context_receipts.append(build_context_receipt(root, envelope_path, run_id=run_id))
+    gate = check_current_step(root, run_id, workflow_id)
+    close_gate = evaluate_close_gate(root, run_id, workflow_id=workflow_id, context_receipts=context_receipts)
 
     current_step = workflow["steps"][state["current_step_index"]]
     return {
@@ -160,7 +161,14 @@ def evaluate_all_artifact_gates(root: Path, run_id: str, *, workflow_id: str = D
     }
 
 
-def evaluate_close_gate(root: Path, run_id: str, *, workflow_id: str = DEFAULT_WORKFLOW) -> dict:
+def evaluate_close_gate(
+    root: Path,
+    run_id: str,
+    *,
+    workflow_id: str = DEFAULT_WORKFLOW,
+    context_receipts: list[dict] | None = None,
+    envelope_expected: bool | None = None,
+) -> dict:
     _validate_run_id(run_id)
     workflow = load_workflow(root, workflow_id)
     state = load_state(root, run_id, workflow_id)
@@ -177,6 +185,13 @@ def evaluate_close_gate(root: Path, run_id: str, *, workflow_id: str = DEFAULT_W
             _artifact_step(workflow, "implementation"),
         )
     implementation_ok = bool(implementation_ref and implementation_ref.get("sha256") and not implementation_errors)
+    final_parity_ref = next((ref for ref in artifact_refs if ref.get("id") == "artifact:handoff"), None)
+    final_parity_errors = _validate_final_parity_evidence(root, workflow, run_id)
+    final_parity_ok = bool(final_parity_ref and final_parity_ref.get("sha256") and not final_parity_errors)
+    if envelope_expected is None:
+        envelope_expected = _state_expects_context_receipt(state)
+    receipt_errors = _validate_expected_context_receipts(context_receipts or [], expected=envelope_expected)
+    receipt_ok = not receipt_errors
     digest_refs_ok = bool(artifact_refs) and all(ref.get("sha256") for ref in artifact_refs)
     state_ref = _artifact_ref(root, _state_path(root, workflow, run_id), "workflow-state", kind="workflow-state")
     workflow_ref = _artifact_ref(
@@ -205,6 +220,19 @@ def evaluate_close_gate(root: Path, run_id: str, *, workflow_id: str = DEFAULT_W
             "ok": digest_refs_ok,
             "evidence_refs": [state_ref, workflow_ref, *artifact_refs],
         },
+        {
+            "id": "context_receipt_presence",
+            "ok": receipt_ok,
+            "expected": bool(envelope_expected),
+            "receipt_count": len(context_receipts or []),
+            "errors": receipt_errors,
+        },
+        {
+            "id": "final_parity_evidence",
+            "ok": final_parity_ok,
+            "evidence_refs": [final_parity_ref] if final_parity_ref else [],
+            "errors": final_parity_errors,
+        },
     ]
     errors: list[str] = []
     if state.get("status") != "complete":
@@ -216,6 +244,9 @@ def evaluate_close_gate(root: Path, run_id: str, *, workflow_id: str = DEFAULT_W
         errors.append("implementation artifact must pass its returned-edits evidence gate before close")
     if not digest_refs_ok:
         errors.append("all workflow, state, and artifact references must include sha256 digests")
+    errors.extend(receipt_errors)
+    if final_parity_errors:
+        errors.extend(final_parity_errors)
     return {
         "ok": not errors and all(check["ok"] for check in checks),
         "checks": checks,
@@ -253,6 +284,56 @@ def validate_run_manifest(manifest: dict) -> TraceabilityCheck:
         required=["schema_version", "manifest_id", "algorithm_version", "run", "workflow", "artifacts", "gates"],
         ref_arrays=["artifacts"],
     )
+
+
+def _state_expects_context_receipt(state: dict) -> bool:
+    context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    return any(
+        bool(value)
+        for value in [
+            state.get("context_receipt_expected"),
+            state.get("context_envelope_expected"),
+            state.get("expected_context_receipt"),
+            state.get("expected_context_receipts"),
+            state.get("context_envelope"),
+            state.get("envelope_path"),
+            context.get("receipt_expected"),
+            context.get("envelope_expected"),
+            context.get("envelope_path"),
+        ]
+    )
+
+
+def _validate_expected_context_receipts(receipts: list[dict], *, expected: bool) -> list[str]:
+    if not expected:
+        return []
+    if not receipts:
+        return ["ContextReceipt is required for close because a context envelope was expected"]
+    errors: list[str] = []
+    for index, receipt in enumerate(receipts):
+        check = validate_context_receipt(receipt)
+        errors.extend(f"ContextReceipt[{index}]: {error}" for error in check.errors)
+    return errors
+
+
+def _validate_final_parity_evidence(root: Path, workflow: dict, run_id: str) -> list[str]:
+    handoff_path = artifact_path(root, workflow, run_id, "handoff")
+    if not handoff_path.exists():
+        return ["final parity evidence is required in the handoff artifact before close"]
+    text = handoff_path.read_text(encoding="utf-8")
+    verification = _section(_body_without_frontmatter(text), "Verification").lower()
+    if "final parity" not in verification and "parity evidence" not in verification:
+        return ["final parity evidence is required in the handoff Verification section before close"]
+    return []
+
+
+def _body_without_frontmatter(text: str) -> str:
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return text
+    return text[end + len("\n---\n") :]
 
 
 def _validate_traceability_shape(payload: dict, *, required: list[str], ref_arrays: list[str]) -> TraceabilityCheck:

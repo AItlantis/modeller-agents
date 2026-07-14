@@ -7,11 +7,12 @@ from pathlib import Path
 from .backend import check_backend, format_backend_check, list_backend_ids
 from .doctor import run_doctor
 from .install import install_plugin
+from .memory_transport import transport_memory_candidate
 from .readiness import build_readiness_report
 from .run import run_backend_pipeline, validate_backend_json, validate_result_json
 from .route import route_envelope
 from .sync import list_vendors, plan_sync
-from .traceability import build_run_manifest, evaluate_close_gate, write_run_manifest
+from .traceability import build_context_receipt, build_run_manifest, evaluate_close_gate, write_run_manifest
 from .workflow import advance_workflow, check_current_step, complete_artifact, format_status, init_workflow
 
 
@@ -35,6 +36,20 @@ def build_parser() -> argparse.ArgumentParser:
     readiness = sub.add_parser("readiness", help="Plan strict-readiness remediation without applying changes.")
     readiness.add_argument("--root", dest="command_root", help="Repository root to inspect.")
     readiness.add_argument("--json", action="store_true", help="Emit a machine-readable readiness report.")
+
+    memory = sub.add_parser("memory", help="Transport modeller-memory candidates through agent-owned seams.")
+    memory.add_argument("--root", dest="command_root", help="Repository root to inspect.")
+    memory_sub = memory.add_subparsers(dest="memory_command", required=True)
+    memory_transport = memory_sub.add_parser(
+        "transport-candidate",
+        help="Write a vault-inbox MemoryCandidate as a discovery draft.",
+    )
+    memory_transport.add_argument("--candidate", required=True, help="MemoryCandidate JSON path.")
+    memory_transport.add_argument(
+        "--vault-inbox",
+        required=True,
+        help="Vault inbox/discovery-drafts directory to receive the draft.",
+    )
 
     sync = sub.add_parser("sync", help="Print the git subtree command for a planned vendor sync.")
     sync.add_argument("--root", dest="command_root", help="Repository root to inspect.")
@@ -132,6 +147,11 @@ def main(argv: list[str] | None = None) -> int:
         report = build_readiness_report(root)
         print(report.format_json() if args.json else report.format())
         return 0 if report.ok else 1
+    if args.command == "memory":
+        if args.memory_command == "transport-candidate":
+            result = transport_memory_candidate(Path(args.candidate), Path(args.vault_inbox))
+            print(result.format())
+            return 0 if result.ok else 1
     if args.command == "sync":
         if not args.vendor:
             for vendor in list_vendors(root):
@@ -227,13 +247,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(manifest, indent=2))
             return 0
         if args.workflow_command == "close":
+            context_receipts = []
+            if args.envelope:
+                context_receipts.append(build_context_receipt(root, Path(args.envelope), run_id=args.run_id))
             path = write_run_manifest(
                 root=root,
                 run_id=args.run_id,
                 envelope_path=Path(args.envelope) if args.envelope else None,
                 output_path=Path(args.manifest_output) if args.manifest_output else None,
             )
-            gate = evaluate_close_gate(root, args.run_id)
+            gate = evaluate_close_gate(root, args.run_id, context_receipts=context_receipts)
             print(json.dumps({"ok": gate["ok"], "manifest": str(path), "close_gate": gate}, indent=2))
             return 0 if gate["ok"] else 1
     raise AssertionError(args.command)
