@@ -163,7 +163,7 @@ Strict readiness is a release/operator gate. It promotes these conditions to blo
 - contract schema fallback to sibling checkouts;
 - missing real backend smoke evidence.
 
-As of 2026-07-11, normal doctor passes for the scaffold, while strict readiness is intentionally blocked by known setup gaps. That is the correct state until packs, vendors, schema vendoring, and backend smoke evidence are completed.
+As of 2026-07-14, normal doctor passes for the runtime, while strict readiness is intentionally blocked by known setup gaps. That is the correct state until packs, vendors, schema vendoring, and backend smoke evidence are completed.
 
 ## 9. Current Evidence Commands
 
@@ -174,7 +174,7 @@ $env:PYTHONPATH='AItlantis\modeller-agents\src'
 python -m modeller.cli doctor --root AItlantis\modeller-agents
 python -m modeller.cli doctor --root AItlantis\modeller-agents --strict
 python -m modeller.cli readiness --root AItlantis\modeller-agents --json
-python -m modeller.cli route --root AItlantis\modeller-agents --context path\to\context.json
+python -m modeller.cli route --root AItlantis\modeller-agents --envelope path\to\context.json
 python -m modeller.cli workflow --root AItlantis\modeller-agents status --run-id orchestration-readiness-001
 python -m modeller.cli workflow --root AItlantis\modeller-agents check --run-id orchestration-readiness-001
 ```
@@ -183,7 +183,7 @@ Run tests from the source checkouts:
 
 ```powershell
 cd AItlantis\modeller-agents
-python -m pytest
+python -m pytest -q
 
 cd ..\modeller-pipelines
 python -m pytest -q -p no:cacheprovider conformance

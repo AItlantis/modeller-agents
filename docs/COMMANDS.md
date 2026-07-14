@@ -102,7 +102,7 @@ python -m modeller.cli route --root AItlantis\modeller-agents --envelope path\to
 
 Routes a context envelope to a target repository bundle, central reusable skill, and reference pack set.
 
-Route decisions read bundles and reference packs as central runtime assets under `--root`. They do not imply that those assets have been installed into the target repository.
+Route decisions read bundles and reference packs from the runtime root for `--root`. In a source checkout that is the repository root; in an installed target it is the manifest-declared `.modeller/runtime/` snapshot.
 
 Routing is a hard gate: unknown `intent.requested_capability` values fail, the selected skill must be declared by the target bundle, and at least one selected valid reference pack must authorize the selected skill through `central_skills`.
 

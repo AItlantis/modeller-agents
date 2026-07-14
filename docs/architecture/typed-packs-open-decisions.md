@@ -1,79 +1,139 @@
-# Typed Packs & Knowledge Axis - Open Decisions
+# Typed Packs And Knowledge Axis Decision Register
 
-Status: implementation-condition register. Date: 2026-07-12. Owner: modeller-agents.
+Status: implementation-condition register. Date: 2026-07-14. Owner: `modeller-agents`.
 
-This register tracks decisions for the typed-packs knowledge-axis proposal. D1 and D2 were pre-existing single-axis routing debts and are now implemented. D3-D6 were ruled by the independent 2026-07-12 board; D3/D4/D5 carried implementation conditions, and D6 was accepted. See that document for axis definitions and `typed-packs-review-backlog.md` for antagonist findings that should be promoted into this register.
+This register tracks the typed-packs knowledge-axis decisions referenced by the README. It records
+what is implemented in `modeller-agents` and what remains blocked by `modelling-knowledge`
+governance gates. It does not reactivate vault domain routability by itself.
 
-## D1 - Fix `CAPABILITY_SKILLS` First
+## Current State
 
-- **Axis:** A6 (pre-existing debt)
-- **Question:** Should the five pipeline skills missing from `CAPABILITY_SKILLS` in `src/modeller/route.py` (`pipeline-smoke`, `pipeline-review`, `pipeline-fix`, `backend-scaffold`, `backend-align`) be added now, as a standalone fix, separately from any domain-axis work?
-- **Fable recommendation:** Yes. Do it first, decoupled from the knowledge-axis proposal, since it is an existing routing gap independent of any new axis.
-- **Status:** ACCEPTED and implemented
-- **Notes:** Implemented in `src/modeller/route.py`: the five pipeline/backend skills are now routable by `requested_capability`, and unknown capabilities fail instead of silently falling back to `workflow`. Coverage lives in `tests/test_reference_packs.py`.
+- D1 and D2 are implemented in the router and capability map.
+- D3, D4, and D5 were accepted with implementation conditions by the 2026-07-12 independent board.
+- D6 was accepted by the same board.
+- The `modeller-agents` implementation conditions are satisfied for routing, validation, and budgeted
+  selection.
+- Vault domains remain disabled: `modelling-knowledge` keeps `product`, `accessibility`, and
+  `transport` at `status: draft` / `routable: false`.
+- Domain reactivation still requires vault-side governance closure: N-2 general acceptance, DR-1
+  attribution, and decision `0010` general-scope acceptance, followed by regenerated exports and
+  route verification.
 
-## D2 - Resolve the `pipeline-backend` Bundle Key
+## D1 - Capability Map Completeness
 
-- **Axis:** A6 (pre-existing debt)
-- **Question:** Is `pipeline-backend` meant to be a real repository identity that `route_envelope` resolves `target_repository` against, or a repository-class/category label?
-- **Fable recommendation:** Rename the bundle key to a real repository identity, or explicitly define what the routing key is allowed to mean. Either resolution is acceptable, but silent ambiguity is not.
-- **Status:** ACCEPTED and implemented
-- **Notes:** Bundles now carry `routingKeyKind`, with allowed values `repository` and `repository-class`. `pipeline-backend.bundle.json` declares `repository-class`; repository-owned bundles declare `repository`. `doctor` and `route` reject missing or invalid values, and route output carries `routing_key_kind` for audit.
+Question: should pipeline/backend skills be added to the route capability map separately from the
+knowledge-axis work?
 
-## D3 - `intent.domains[]` Cardinality And Combination Semantics
+Status: accepted and implemented.
 
-- **Axis:** A1 (routing)
-- **Question:** When a bundle declares `defaultKnowledge[]` and a request also carries `intent.domains[]`, do the two combine (union) or does the request override the bundle default?
-- **Fable recommendation:** Union, no override. A request's `domains[]` should add to, never replace, a bundle's default knowledge packs.
-- **Status:** ACCEPT-WITH-CONDITION (independent antagonist board, 2026-07-12)
-- **Ruling:** Adopt **ordered union with explicit provenance** (the vault-side form from `modelling-knowledge/docs/dev/vault-alignment-plan.md`, stronger than the bare union): `effective domains = explicit request domains + bundle defaults not already present`, each tagged `source: request | bundle-default | inferred`.
-- **Conditions (must hold before union semantics ship — gate at VA7/VA8):** (1) the context-budget contract (`max_knowledge_packs`, `max_required_notes`, …) is implemented and enforced, not merely described (addresses VA-08/VA-10 hidden-context-expansion); (2) route decisions expose per-domain `source` so audit can distinguish asked-for from silently-added; (3) bundle defaults are size-capped by an enforced validator (A5 "≤2 default knowledge packs").
-- **Notes:** Direction settled (union, not override); not an unconditional closure. Mirrors `modelling-knowledge` decision 0010 and the alignment plan's VA8 gate.
-- **Implementation status (2026-07-12): CONDITION SATISFIED in `modeller-agents` at medium effort.** `src/modeller/knowledge_packs.py` defines and enforces the context-budget contract (`max_knowledge_packs = 3`, `max_required_notes = 8`, `max_optional_notes_loaded = 4`, `max_full_notes = 2`), `route_envelope` emits `knowledge_domains[]` with `source: request | bundle-default`, and `doctor`/route validation reject `defaultKnowledge[]` over the enforced cap of 2.
+Implementation:
 
-## D4 - Wildcard `["*"]` Domain Affinity On Broad Skills
+- `src/modeller/capabilities.py` owns canonical capability-to-skill mapping.
+- `route` and `plan` use that map rather than silently falling back to `workflow`.
+- Unknown capabilities fail deterministically.
+- Pipeline/backend capabilities such as `pipeline-smoke`, `pipeline-review`, `pipeline-fix`,
+  `backend-scaffold`, and `backend-align` are routable.
 
-- **Axis:** A3 (skill/method)
-- **Question:** Is `domain_affinity = ["*"]` acceptable on broad skills like `workflow` or `review`, or must every domain a skill can consume be listed individually for auditability?
-- **Fable recommendation:** Open question. There is a real tension between skill-authoring convenience and auditability.
-- **Status:** ACCEPT-WITH-CONDITION (independent antagonist board, 2026-07-12)
-- **Ruling:** Prohibit `*` / `all` / `any`. Use the three-mode taxonomy `domain_affinity: none | explicit | routed` (vault-side recommendation), where `routed` = the skill consumes only packs already selected and authorized by routing.
-- **Conditions (before any skill may declare `mode: routed`):** a bounded, documented selection policy must exist — max packs per request, precedence when multiple domains apply, and an explicit rule that `routed` never expands beyond what an explicit request or a capped default already authorized. Without it, `routed` silently reintroduces wildcard-equivalent breadth (VA-08/VA-11); until the policy exists, treat `routed` as equivalent to `explicit` (i.e. not implemented).
-- **Notes:** Direction settled (no wildcard); `routed` is the correct shape but is gated on the selection-policy condition. Mirrors decision 0010.
-- **Implementation status (2026-07-12): CONDITION SATISFIED in `modeller-agents` at medium effort.** Skill `domain_affinity` validation accepts only `none`, `explicit`, or `routed`, rejects `*`/`all`/`any`, and selected knowledge remains bounded by the same route selection budget. `explicit` allows only listed domains; `routed` performs no expansion and consumes only domains already selected by explicit request or capped bundle defaults.
+## D2 - Bundle Routing Key Kind
 
-## D5 - Knowledge Pack Generation: Generated Vs Hand-Authored
+Question: should a bundle key be a repository identity or a reusable class/category label?
 
-- **Axis:** A2 (pack typing)
-- **Question:** Should knowledge packs under `reference-packs/domains/<domain>.toml` be generated from `modelling-knowledge`'s `_index.md` summaries, or hand-authored as TOML directly?
-- **Fable recommendation:** Generate from `_index.md` summaries, so the pack's `[[notes]]` pointers stay synchronized with the source-of-truth index.
-- **Status:** ACCEPT-WITH-CONDITION (independent antagonist board, 2026-07-12)
-- **Ruling:** Adopt the **hybrid** model (vault-side, stronger than Fable's plain generation): vault-generated candidate (from the structured `vault-index.json` / `knowledge-domains.json`, not prose `_index.md`) → human-reviewed active pack (author picks required/optional notes, purpose, ordering) → mandatory automated parity validation against current vault exports (`source_domains_digest`, `source_domain_notes_digest`).
-- **Conditions (before any pack is marked `active`):** (1) parity validation must be recurring/triggered (on vault-commit change, on pack load, or scheduled) — not point-in-time only (VA-04); (2) `vault-index.json` / `vault_doctor export-index` must exist as a deterministic, versioned artifact first (VA3) — the ruling is correct but non-executable until then; (3) pack lifecycle must be linked to note supersession so a superseded note invalidates dependent packs (VA-14).
-- **Notes:** Direction settled (hybrid over plain-generate); implementation is gated on the vault index export existing. Mirrors decision 0010.
-- **Implementation status (2026-07-12): CONDITION SATISFIED in `modeller-agents` at medium effort.** `doctor` and route-time validation both load current `vault_doctor export-index` / `export-domains` outputs when domain packs exist, compare `source_domain_notes_digest` / `source_domains_digest`, reject active packs without current exports, reject note IDs absent from the vault index, and invalidate superseded/deprecated/historical note references. The first active pilot is `reference-packs/domains/accessibility.toml`, containing note IDs and routing purposes only. Two regression tests prove the decoupling: unrelated whole-index digest changes do not invalidate the pack, while changes to the domain's own `notes_digest` do.
+Status: accepted and implemented.
 
-## D6 - `product` Vs `ux` Subfolder Split
+Implementation:
 
-- **Axis:** A4 (knowledge-vault scope)
-- **Question:** Should a new `ux/` subfolder be introduced under the relevant knowledge area now, or should ux-adjacent notes continue to live under `product/` until they demonstrably do not fit there?
-- **Fable recommendation:** No `ux/` split yet. Keep ux-adjacent notes under `product/` until accepted notes stop fitting there.
-- **Status:** ACCEPTED (independent antagonist board, 2026-07-12)
-- **Ruling:** No `ux/` split now; ux-adjacent notes stay under `domains/product/`. Re-evaluate only against decision 0005's five concrete conditions (a real cross-product UX-method cluster of accepted notes that genuinely does not fit `product/`, applies to more than one product, forms a coherent cluster, has an accepted vault-scope decision, and an explicit product-vs-UX-method boundary).
-- **Notes:** Clean accept — the conservative/reversible choice, backed by accepted decision 0005 (the domain's owning authority). No condition on D6 itself; 0005's own status is being confirmed under the same board pass. Mirrors decision 0010.
+- Bundles declare `routingKeyKind`.
+- Valid values are `repository` and `repository-class`.
+- `doctor` and `route` reject missing or invalid values.
+- Route output carries `routing_key_kind` for audit.
 
-## Blocking Order
+## D3 - Domain Combination Semantics
 
-D1 and D2 are resolved in the current single-axis router. **D3–D6 were ruled on by an independent antagonist board on 2026-07-12** (D3/D4/D5 ACCEPT-WITH-CONDITION, D6 ACCEPTED); the direction of each is now settled, so none remain OPEN. Their **conditions** (D3 context-budget enforcement + per-domain provenance; D4 bounded selection policy before `routed`; D5 recurring parity + the vault index export existing + supersession-linked invalidation) are the gates that must be met before the domain axis is *implemented* — they block implementation, not the ruling. These conditions map to Phase VA7/VA8 of `modelling-knowledge/docs/dev/vault-alignment-plan.md` and to the cross-repo tracker `modelling-knowledge/decisions/0010-typed-packs-cross-repo-coordination.md`.
+Question: when a request supplies `intent.domains[]` and a bundle supplies `defaultKnowledge[]`, do
+they combine or does the request override the default?
 
-This ruling removes the forcing-function the vault flagged (its domains were rolled back to non-routable pending exactly this acceptance); re-activating vault domain routability is now legitimate once these conditions and the vault-side board confirmation are in place.
+Status: accepted with condition; condition satisfied in `modeller-agents`.
 
-2026-07-12 implementation update: those gates are now satisfied for the VA5 accessibility pilot. Vault routability can be active for the already scoped domains while `modelling-knowledge` remains the authority for note IDs, metadata, sensitivity, and eligibility.
+Ruling:
 
-## Enforcement Needs N-1/N-2/N-3
+- Use ordered union.
+- Preserve provenance for every selected domain: `request` or `bundle-default`.
+- Do not silently expand beyond explicit request or capped bundle defaults.
 
-Status as of 2026-07-12:
+Implementation:
 
-- **N-1 shared eligibility conformance test:** MET for VA5. `tests/test_reference_packs.py::test_live_accessibility_pack_conforms_to_vault_export` validates the active pilot against the live vault export, and `test_live_route_selects_accessibility_pack_with_provenance` proves the route consumes it with explicit provenance.
-- **N-2 `authority_context` completeness/currency validator:** MET for VA5 pack consumption. Active knowledge packs must carry an `authority_context` table naming the vault, registry, scope decision, knowledge-seam decision, coordination decision, and check date; digest parity supplies current-export currency.
-- **N-3 CI import-guard for `vault_doctor`:** MET in `modeller-memory` via `tests/test_import_guards.py`, which fails if runtime modules outside `tools/vault_doctor/` import vault-doctor internals.
+- `src/modeller/knowledge_packs.py` enforces the context budget:
+  `max_knowledge_packs = 3`, `max_required_notes = 8`,
+  `max_optional_notes_loaded = 4`, `max_full_notes = 2`.
+- Bundle `defaultKnowledge[]` is capped at 2.
+- Route output exposes `knowledge_domains[]` with source provenance.
+
+## D4 - Domain Affinity Modes
+
+Question: can broad skills use wildcard domain affinity?
+
+Status: accepted with condition; condition satisfied in `modeller-agents`.
+
+Ruling:
+
+- Wildcards are prohibited: no `*`, `all`, or `any`.
+- Skills use `domain_affinity.mode`: `none`, `explicit`, or `routed`.
+- `routed` consumes only domains already selected by the router; it does not infer or expand.
+
+Implementation:
+
+- Skill front matter validation rejects wildcard-like domain affinity.
+- Route selection remains bounded by the same knowledge budget.
+- `explicit` permits only listed domains; `routed` permits only already-routed domains.
+
+## D5 - Knowledge Pack Currency And Authority
+
+Question: should knowledge packs be generated, hand-authored, or hybrid?
+
+Status: accepted with condition; condition satisfied in `modeller-agents`, with vault routability
+still disabled.
+
+Ruling:
+
+- Use a hybrid model: vault export candidate -> human-reviewed pack -> recurring automated parity
+  validation.
+- Packs carry note IDs, purpose, digest pins, and authority context; they do not copy note bodies.
+
+Implementation:
+
+- `doctor` and route-time validation load current `vault_doctor export-index` and `export-domains`
+  outputs when domain packs exist.
+- Validation compares `source_domain_notes_digest` and `source_domains_digest`.
+- Validation rejects absent notes, superseded/deprecated/historical note references, and active packs
+  without current exports.
+- The pilot pack `reference-packs/domains/accessibility.toml` remains inert while the vault exports
+  non-routable domains.
+
+## D6 - Product Versus UX Split
+
+Question: should a new `ux/` folder be introduced now?
+
+Status: accepted.
+
+Ruling:
+
+- No `ux/` split now.
+- UX-adjacent knowledge remains under `domains/product/` unless accepted future evidence satisfies
+  the domain-scope conditions in `modelling-knowledge` decision `0005`.
+
+## Enforcement State
+
+- N-1 shared eligibility conformance is structurally satisfied for the VA5 pilot, but live routing is
+  intentionally disabled by the vault's non-routable domain export.
+- N-2 authority-context completeness/currency is implemented for pack loading and memory-runtime
+  classification inputs, but not yet accepted at general governance scope by `modelling-knowledge`.
+- N-3 import isolation is enforced in `modeller-memory` by `tests/test_import_guards.py`.
+
+## Cross-Repo Pointers
+
+- Vault historical alignment plan:
+  `modelling-knowledge/docs/plan/historical/vault-alignment-plan.md`
+- Cross-repo coordination record:
+  `modelling-knowledge/decisions/0010-typed-packs-cross-repo-coordination.md`
+- Current machine-readable status:
+  `modelling-knowledge/docs/dev/ecosystem-status.json`
