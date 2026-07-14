@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .capabilities import CAPABILITY_SKILLS
 from .contracts import resolve_schema_dir
 from .knowledge_packs import (
     load_vault_exports,
@@ -14,7 +15,7 @@ from .knowledge_packs import (
     validate_skill_domain_affinities,
 )
 from .reference_packs import validate_reference_pack
-from .route import CAPABILITY_SKILLS
+from .runtime import is_installed_runtime, runtime_path, runtime_relative_path, runtime_root
 from .toml_compat import load_toml
 
 
@@ -93,28 +94,25 @@ def run_doctor(root: Path, *, strict: bool = False) -> DoctorResult:
 
 
 def _is_installed_runtime(root: Path) -> bool:
-    manifest = root / ".modeller/install-manifest.json"
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return False
-    return data.get("installer") == "modeller-agents"
+    return is_installed_runtime(root)
 
 
 def _check_required_paths(root: Path, result: DoctorResult, *, installed_runtime: bool = False) -> None:
-    required = [
+    root_required = [
         ".claude/settings.json",
         ".claude/plugins/modeller/.claude-plugin/plugin.json",
         ".claude/plugins/modeller/.claude-plugin/marketplace.json",
+    ]
+    runtime_required = [
         "backends.toml",
         "schemas/context-receipt.schema.json",
         "schemas/run-manifest.schema.json",
         "vendors.toml",
     ]
     if installed_runtime:
-        required.extend(
+        root_required.extend([".modeller/install-manifest.json", "sitecustomize.py"])
+        runtime_required.extend(
             [
-                ".modeller/install-manifest.json",
                 "method/workflows",
                 "method/templates/workflow-artifact.md",
                 "reference-packs",
@@ -122,10 +120,14 @@ def _check_required_paths(root: Path, result: DoctorResult, *, installed_runtime
             ]
         )
     else:
-        required.extend(["README.md", "AGENTS.md", "pyproject.toml", "modeller-modules.yaml"])
-    for rel in required:
+        root_required.extend(["README.md", "AGENTS.md", "pyproject.toml", "modeller-modules.yaml"])
+    for rel in root_required:
         if not (root / rel).exists():
             result.errors.append(f"missing required path: {rel}")
+    assets = runtime_root(root)
+    for rel in runtime_required:
+        if not (assets / rel).exists():
+            result.errors.append(f"missing required path: {runtime_relative_path(root, assets / rel)}")
 
 
 def _check_install_manifest(root: Path, result: DoctorResult) -> None:
@@ -153,6 +155,14 @@ def _check_install_manifest(root: Path, result: DoctorResult) -> None:
         result.errors.append("missing Python import bootstrap: sitecustomize.py")
     if manifest.get("include_runtime_assets") is not True:
         result.warnings.append("install manifest says runtime assets were not copied into this target")
+    runtime_rel = manifest.get("runtime_root")
+    if runtime_rel:
+        if not isinstance(runtime_rel, str):
+            result.errors.append(".modeller/install-manifest.json runtime_root must be a string when set")
+        elif Path(runtime_rel).is_absolute() or ".." in Path(runtime_rel).parts:
+            result.errors.append(".modeller/install-manifest.json runtime_root must be a safe relative path")
+        elif not (root / runtime_rel).exists():
+            result.errors.append(f"install manifest runtime_root does not exist: {runtime_rel}")
 
 
 def _check_packaging(root: Path, result: DoctorResult) -> None:
@@ -263,7 +273,8 @@ def _check_skills(root: Path, result: DoctorResult) -> None:
 
 def _check_bundles(root: Path, result: DoctorResult) -> None:
     known_skills = set(result.skills)
-    for bundle_file in sorted((root / "bundles").glob("*.bundle.json")):
+    assets = runtime_root(root)
+    for bundle_file in sorted((assets / "bundles").glob("*.bundle.json")):
         bundle = _load_json(bundle_file, result)
         if not bundle:
             continue
@@ -293,7 +304,8 @@ def _check_bundles(root: Path, result: DoctorResult) -> None:
 
 def _check_reference_packs(root: Path, result: DoctorResult, *, strict: bool) -> None:
     checks = {}
-    for bundle_file in sorted((root / "bundles").glob("*.bundle.json")):
+    assets = runtime_root(root)
+    for bundle_file in sorted((assets / "bundles").glob("*.bundle.json")):
         bundle = _load_json(bundle_file, result)
         if not bundle:
             continue
@@ -322,8 +334,8 @@ def _check_reference_packs(root: Path, result: DoctorResult, *, strict: bool) ->
                 f"{bundle_file.name} references skills not authorized by selected reference packs: "
                 f"{', '.join(missing_from_pack_union)}"
             )
-    for pack_file in sorted((root / "reference-packs").glob("*.toml")):
-        rel = pack_file.relative_to(root).as_posix()
+    for pack_file in sorted((assets / "reference-packs").glob("*.toml")):
+        rel = pack_file.relative_to(assets).as_posix()
         if rel not in checks:
             result.warnings.append(f"reference pack is not used by any bundle: {rel}")
 
@@ -331,11 +343,12 @@ def _check_reference_packs(root: Path, result: DoctorResult, *, strict: bool) ->
 def _check_knowledge_axis(root: Path, result: DoctorResult) -> None:
     result.errors.extend(validate_skill_domain_affinities(root))
     has_default_knowledge = False
-    for bundle_file in sorted((root / "bundles").glob("*.bundle.json")):
+    assets = runtime_root(root)
+    for bundle_file in sorted((assets / "bundles").glob("*.bundle.json")):
         bundle = _load_json(bundle_file, result)
         if bundle.get("defaultKnowledge"):
             has_default_knowledge = True
-    domain_root = root / "reference-packs" / "domains"
+    domain_root = assets / "reference-packs" / "domains"
     if not domain_root.exists() and not has_default_knowledge:
         return
     exports = load_vault_exports(root)
@@ -344,7 +357,7 @@ def _check_knowledge_axis(root: Path, result: DoctorResult) -> None:
     for pack_file in sorted(domain_root.glob("*.toml")) if domain_root.exists() else []:
         if pack_file.name == "_registry.toml":
             continue
-        rel = pack_file.relative_to(root).as_posix()
+        rel = pack_file.relative_to(assets).as_posix()
         check = validate_knowledge_pack(root, rel, exports=exports)
         result.errors.extend(check.errors)
         result.warnings.extend(check.warnings)
@@ -431,7 +444,8 @@ def _check_installed_skill_surface(root: Path, result: DoctorResult) -> None:
             "CAPABILITY_SKILLS must map every canonical skill name directly to itself: "
             + ", ".join(missing_direct_capabilities)
         )
-    for bundle_file in sorted((root / "bundles").glob("*.bundle.json")):
+    assets = runtime_root(root)
+    for bundle_file in sorted((assets / "bundles").glob("*.bundle.json")):
         bundle = _load_json(bundle_file, result)
         if not bundle:
             continue
@@ -442,14 +456,14 @@ def _check_installed_skill_surface(root: Path, result: DoctorResult) -> None:
             result.errors.append(f"{bundle_file.name} has skills missing from plugin skill dirs: {', '.join(unknown)}")
         if unrouted:
             result.errors.append(f"{bundle_file.name} has skills missing from CAPABILITY_SKILLS: {', '.join(unrouted)}")
-    for pack_file in sorted((root / "reference-packs").glob("*.toml")):
+    for pack_file in sorted((assets / "reference-packs").glob("*.toml")):
         data = _load_toml(pack_file, result)
         skills = data.get("central_skills", []) if data else []
         if not isinstance(skills, list):
             continue
         unknown = sorted(set(skills).difference(known))
         unrouted = sorted(set(skills).difference(routed_skills))
-        rel = pack_file.relative_to(root).as_posix()
+        rel = pack_file.relative_to(assets).as_posix()
         if unknown:
             result.errors.append(f"{rel} has skills missing from plugin skill dirs: {', '.join(unknown)}")
         if unrouted:
@@ -516,8 +530,8 @@ def _load_modules_manifest(path: Path, result: DoctorResult) -> dict[str, list[s
 
 
 def _check_workflows(root: Path, result: DoctorResult) -> None:
-    workflow_dir = root / "method/workflows"
-    template_path = root / "method/templates/workflow-artifact.md"
+    workflow_dir = runtime_path(root, "method", "workflows")
+    template_path = runtime_path(root, "method", "templates", "workflow-artifact.md")
     if not workflow_dir.exists():
         result.errors.append("missing workflow directory: method/workflows")
         return
@@ -597,7 +611,7 @@ def _check_workflow_definition(workflow_file: Path, workflow: dict, result: Doct
 
 
 def _check_backends(root: Path, result: DoctorResult, *, strict: bool) -> None:
-    data = _load_toml(root / "backends.toml", result)
+    data = _load_toml(runtime_path(root, "backends.toml"), result)
     for name, cfg in data.get("backend", {}).items():
         result.backends.append(name)
         if cfg.get("backend_id") != name:
@@ -623,7 +637,7 @@ def _check_backends(root: Path, result: DoctorResult, *, strict: bool) -> None:
 
 
 def _check_vendors(root: Path, result: DoctorResult, *, strict: bool) -> None:
-    data = _load_toml(root / "vendors.toml", result)
+    data = _load_toml(runtime_path(root, "vendors.toml"), result)
     for name, cfg in data.get("vendor", {}).items():
         if cfg.get("writable") is not False:
             result.errors.append(f"vendor {name} must be writable = false")

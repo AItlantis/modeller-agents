@@ -52,8 +52,8 @@ The default model is central runtime plus local plugin wiring:
 
 - the source checkout remains the authority for skills, methods, bundles, packs, registries, and docs;
 - `modeller install` copies the plugin surface into a target repository, merges `.claude/settings.json`, and creates `.mcp.json` from the example when absent;
-- `modeller install --include-runtime-assets` also snapshots `method/`, `reference-packs/`, `bundles/`, `backends.toml`, and `vendors.toml` into the target;
-- every applied install writes `.modeller/install-manifest.json` with source git provenance and copied asset inventory;
+- `modeller install --include-runtime-assets` also snapshots `method/`, `reference-packs/`, `bundles/`, `backends.toml`, and `vendors.toml` under `.modeller/runtime/` in the target;
+- every applied install writes `.modeller/install-manifest.json` with source git provenance, runtime root, and copied asset inventory;
 - wheel builds force-include the plugin and runtime assets under `modeller/runtime`, so installed `modeller` commands can install from packaged assets when a source checkout is not supplied.
 
 Installing runtime assets is a snapshot operation. It does not make draft packs active, sync planned vendors, or prove a backend runtime smoke.

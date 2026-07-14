@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .runtime import runtime_path
 from .toml_compat import load_toml
 
 
@@ -22,12 +23,12 @@ class BackendCheck:
 
 
 def list_backend_ids(root: Path) -> list[str]:
-    data = load_toml(root / "backends.toml")
+    data = load_toml(runtime_path(root, "backends.toml"))
     return sorted(data.get("backend", {}).keys())
 
 
 def check_backend(root: Path, backend_id: str) -> BackendCheck:
-    registry = load_toml(root / "backends.toml").get("backend", {})
+    registry = load_toml(runtime_path(root, "backends.toml")).get("backend", {})
     if backend_id not in registry:
         return BackendCheck(backend_id=backend_id, status="missing", errors=["backend is not registered"])
 
@@ -63,7 +64,7 @@ def check_backend(root: Path, backend_id: str) -> BackendCheck:
 
 
 def resolve_backend_root(root: Path, backend_id: str, cfg: dict | None = None) -> Path | None:
-    cfg = cfg or load_toml(root / "backends.toml").get("backend", {}).get(backend_id, {})
+    cfg = cfg or load_toml(runtime_path(root, "backends.toml")).get("backend", {}).get(backend_id, {})
     local_path = root / "backends.local.toml"
     if not local_path.exists():
         return None

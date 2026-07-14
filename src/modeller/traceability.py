@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
+from .runtime import runtime_path
 from .workflow import (
     DEFAULT_WORKFLOW,
     _artifact_step,
@@ -50,11 +51,11 @@ def build_context_receipt(root: Path, envelope_path: Path, *, run_id: str | None
 
     artifact_refs = [_artifact_ref(root, envelope_path, "context-envelope", kind="context-envelope")]
     if decision.bundle:
-        artifact_refs.append(_artifact_ref(root, root / "bundles" / f"{decision.bundle}.bundle.json", "bundle"))
+        artifact_refs.append(_artifact_ref(root, runtime_path(root, "bundles", f"{decision.bundle}.bundle.json"), "bundle"))
     for rel_path in decision.reference_packs:
-        artifact_refs.append(_artifact_ref(root, root / rel_path, f"reference-pack:{rel_path}", kind="reference-pack"))
+        artifact_refs.append(_artifact_ref(root, runtime_path(root, rel_path), f"reference-pack:{rel_path}", kind="reference-pack"))
     for rel_path in decision.knowledge_packs:
-        artifact_refs.append(_artifact_ref(root, root / rel_path, f"knowledge-pack:{rel_path}", kind="knowledge-pack"))
+        artifact_refs.append(_artifact_ref(root, runtime_path(root, rel_path), f"knowledge-pack:{rel_path}", kind="knowledge-pack"))
 
     receipt = {
         "schema_version": TRACEABILITY_SCHEMA_VERSION,
@@ -103,7 +104,7 @@ def build_run_manifest(
     state_ref = _artifact_ref(root, _state_path(root, workflow, run_id), "workflow-state", kind="workflow-state")
     workflow_ref = _artifact_ref(
         root,
-        root / "method" / "workflows" / f"{workflow_id}.workflow.json",
+        runtime_path(root, "method", "workflows", f"{workflow_id}.workflow.json"),
         "workflow-definition",
         kind="workflow-definition",
     )
@@ -190,13 +191,13 @@ def evaluate_close_gate(
     final_parity_ok = bool(final_parity_ref and final_parity_ref.get("sha256") and not final_parity_errors)
     if envelope_expected is None:
         envelope_expected = _state_expects_context_receipt(state)
-    receipt_errors = _validate_expected_context_receipts(context_receipts or [], expected=envelope_expected)
+    receipt_errors = _validate_expected_context_receipts(context_receipts or [], expected=True)
     receipt_ok = not receipt_errors
     digest_refs_ok = bool(artifact_refs) and all(ref.get("sha256") for ref in artifact_refs)
     state_ref = _artifact_ref(root, _state_path(root, workflow, run_id), "workflow-state", kind="workflow-state")
     workflow_ref = _artifact_ref(
         root,
-        root / "method" / "workflows" / f"{workflow_id}.workflow.json",
+        runtime_path(root, "method", "workflows", f"{workflow_id}.workflow.json"),
         "workflow-definition",
         kind="workflow-definition",
     )
@@ -223,7 +224,8 @@ def evaluate_close_gate(
         {
             "id": "context_receipt_presence",
             "ok": receipt_ok,
-            "expected": bool(envelope_expected),
+            "expected": True,
+            "envelope_expected": bool(envelope_expected),
             "receipt_count": len(context_receipts or []),
             "errors": receipt_errors,
         },
@@ -271,19 +273,46 @@ def write_run_manifest(
 
 
 def validate_context_receipt(receipt: dict) -> TraceabilityCheck:
-    return _validate_traceability_shape(
+    check = _validate_traceability_shape(
         receipt,
         required=["schema_version", "receipt_id", "algorithm_version", "retrieval_query", "selection", "retained_refs"],
-        ref_arrays=["retained_refs"],
+        ref_arrays=["retained_refs", "candidate_refs"],
     )
+    selection = receipt.get("selection")
+    if not isinstance(selection, dict):
+        check.errors.append("selection must be an object")
+    elif selection.get("ok") is not True:
+        check.errors.append("selection.ok must be true")
+    if receipt.get("errors"):
+        check.errors.append("errors must be empty")
+    check.ok = not check.errors
+    return check
 
 
 def validate_run_manifest(manifest: dict) -> TraceabilityCheck:
-    return _validate_traceability_shape(
+    check = _validate_traceability_shape(
         manifest,
         required=["schema_version", "manifest_id", "algorithm_version", "run", "workflow", "artifacts", "gates"],
         ref_arrays=["artifacts"],
     )
+    workflow = manifest.get("workflow")
+    if not isinstance(workflow, dict):
+        check.errors.append("workflow must be an object")
+    else:
+        for key in ["definition_ref", "state_ref"]:
+            errors = _validate_artifact_ref(workflow.get(key), f"workflow.{key}")
+            check.errors.extend(errors)
+    for index, receipt in enumerate(manifest.get("context_receipts", []) or []):
+        if not isinstance(receipt, dict):
+            check.errors.append(f"context_receipts[{index}] must be an object")
+            continue
+        receipt_check = validate_context_receipt(receipt)
+        check.errors.extend(f"context_receipts[{index}]: {error}" for error in receipt_check.errors)
+    close_gate = manifest.get("gates", {}).get("close") if isinstance(manifest.get("gates"), dict) else None
+    if not isinstance(close_gate, dict):
+        check.errors.append("gates.close must be an object")
+    check.ok = not check.errors
+    return check
 
 
 def _state_expects_context_receipt(state: dict) -> bool:
@@ -305,10 +334,10 @@ def _state_expects_context_receipt(state: dict) -> bool:
 
 
 def _validate_expected_context_receipts(receipts: list[dict], *, expected: bool) -> list[str]:
-    if not expected:
+    if not expected and not receipts:
         return []
     if not receipts:
-        return ["ContextReceipt is required for close because a context envelope was expected"]
+        return ["ContextReceipt is required for workflow close"]
     errors: list[str] = []
     for index, receipt in enumerate(receipts):
         check = validate_context_receipt(receipt)
@@ -352,10 +381,18 @@ def _validate_traceability_shape(payload: dict, *, required: list[str], ref_arra
             if not isinstance(ref, dict):
                 errors.append(f"{key}[{index}] must be an object")
                 continue
-            for ref_key in ["id", "path", "sha256"]:
-                if not ref.get(ref_key):
-                    errors.append(f"{key}[{index}].{ref_key} is required")
+            errors.extend(_validate_artifact_ref(ref, f"{key}[{index}]"))
     return TraceabilityCheck(ok=not errors, errors=errors)
+
+
+def _validate_artifact_ref(ref: object, label: str) -> list[str]:
+    if not isinstance(ref, dict):
+        return [f"{label} must be an object"]
+    errors: list[str] = []
+    for ref_key in ["id", "path", "sha256"]:
+        if not ref.get(ref_key):
+            errors.append(f"{label}.{ref_key} is required")
+    return errors
 
 
 def _workflow_artifact_refs(root: Path, workflow: dict, run_id: str) -> list[dict]:

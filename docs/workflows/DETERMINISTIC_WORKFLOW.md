@@ -4,7 +4,7 @@
 
 Use this runbook when operating a workflow. The deterministic record is the artifact set plus the workflow state after `workflow advance`; chat messages, subagent summaries, and tool output are working notes until their relevant facts are incorporated into a completed artifact and the gate advances.
 
-Workflow definitions, artifact templates, and required-term policy are central method runtime assets in `method/` under the `modeller-agents` repository passed as `--root`. They are not owned by a target repository install unless installation is explicitly expanded to vendor method assets.
+Workflow definitions, artifact templates, and required-term policy are central method runtime assets in `method/` under the `modeller-agents` repository passed as `--root`. In an installed target, `--include-runtime-assets` snapshots those assets under `.modeller/runtime/method/`.
 
 `run_id` is path-safe by design. It must be 1-64 characters, start with a letter or number, use only letters, numbers, dot, underscore, or dash, and must not contain `..`.
 

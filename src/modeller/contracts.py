@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .runtime import installed_source_root
+
 
 @dataclass
 class SchemaValidation:
@@ -22,7 +24,7 @@ def resolve_schema_dir(root: Path) -> Path | None:
         root / "vendor/modeller-pipelines/contracts/schemas",
         root.parent / "modeller-pipelines/contracts/schemas",
     ]
-    source_root = _installed_source_root(root)
+    source_root = installed_source_root(root)
     if source_root is not None:
         candidates.extend(
             [
@@ -34,20 +36,6 @@ def resolve_schema_dir(root: Path) -> Path | None:
         if candidate.exists():
             return candidate
     return None
-
-
-def _installed_source_root(root: Path) -> Path | None:
-    manifest = root / ".modeller/install-manifest.json"
-    try:
-        payload = json.loads(manifest.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
-    if payload.get("installer") != "modeller-agents":
-        return None
-    source_root = payload.get("source_root")
-    if not isinstance(source_root, str) or not source_root.strip():
-        return None
-    return Path(source_root)
 
 
 def validate_with_contract_schema(root: Path, schema_name: str, value) -> SchemaValidation:

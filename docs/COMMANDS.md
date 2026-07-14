@@ -78,11 +78,11 @@ The installer copies local plugin wiring only by default. The central runtime re
 - `schemas/` RunManifest and ContextReceipt JSON Schemas;
 - `backends.toml`, `vendors.toml`, and contract validation support.
 
-`--include-runtime-assets` copies `method/`, `reference-packs/`, `bundles/`, `schemas/`, `backends.toml`, and `vendors.toml` into the target. It is a snapshot copy for local orchestration. It does not sync vendors, activate draft packs, or prove backend runtime readiness.
+`--include-runtime-assets` copies `method/`, `reference-packs/`, `bundles/`, `schemas/`, `backends.toml`, and `vendors.toml` under `.modeller/runtime/` in the target. It is a snapshot copy for local orchestration. It does not sync vendors, activate draft packs, or prove backend runtime readiness.
 
 When run from a source checkout, `install` reads assets from `--root`. When run from a wheel-installed CLI and `--root` is not a source checkout, it falls back to packaged assets force-included under `modeller/runtime`.
 
-Every applied install writes `.modeller/install-manifest.json` in the target. The manifest records the source root, source git HEAD and worktree status, target root, whether runtime assets were copied, and the copied asset list. Treat it as provenance for the snapshot, not as readiness proof.
+Every applied install writes `.modeller/install-manifest.json` in the target. The manifest records the source root, source git HEAD and worktree status, target root, runtime root, whether runtime assets were copied, and the copied asset list. Treat it as provenance for the snapshot, not as readiness proof.
 
 ## Validate
 
@@ -117,6 +117,24 @@ When the resolved skill is `orchestrate`, or the envelope sets `execution_policy
 - the run's current artifact gate does not pass (from `check_current_step`).
 
 `RouteDecision` now includes a `run_id` field so callers can see which workflow run gated the route. Non-orchestration routes that do not set `requires_workflow` are unchanged and need no `run_id`.
+
+## Plan
+
+```powershell
+python -m modeller.cli plan --root AItlantis\modeller-agents --prompt "review testudo" --json --envelope-output C:\tmp\testudo-envelope.json
+python -m modeller.cli route --root AItlantis\modeller-agents --envelope C:\tmp\testudo-envelope.json
+```
+
+Drafts a deterministic prompt-to-approved-execution scaffold without running the target work. The plan includes:
+
+- `IntentDraft`: prompt, target repository, requested capability, domains, workflow run id, and policy;
+- `AlignmentContract`: source boundary, risk, consent, and approval state;
+- `WorkflowCatalog`: discovered workflow definitions and step owners;
+- `SkillPlan`: the route-resolved skill, bundle, reference packs, and knowledge packs;
+- `ToolPlan`: suggested verification/route commands, approval steps, and blockers;
+- `capability_manifest`: local bundles, skills, backends, workflows, and capability aliases discovered from the repository.
+
+`--target-repository` and `--requested-capability` can be supplied explicitly, or inferred when the prompt mentions exactly one known bundle id and exactly one known capability. `--envelope-output` writes the drafted context envelope so the next `route` command does not require hand-written JSON. The command is scaffold-only: it never executes a backend, workflow advance, or target-repository edit.
 
 ## Run
 

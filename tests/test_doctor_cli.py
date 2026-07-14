@@ -349,21 +349,22 @@ class DoctorCliTests(unittest.TestCase):
             result = install_plugin(ROOT, target, dry_run=False, include_runtime_assets=True)
             self.assertFalse(result.dry_run)
             self.assertTrue((target / ".claude/plugins/modeller").exists())
-            self.assertTrue((target / "method/workflows/modeller-agents-build.workflow.json").exists())
-            self.assertTrue((target / "reference-packs/testudo.toml").exists())
-            self.assertTrue((target / "bundles/testudo.bundle.json").exists())
-            self.assertTrue((target / "schemas/run-manifest.schema.json").exists())
-            self.assertTrue((target / "backends.toml").exists())
-            self.assertTrue((target / "vendors.toml").exists())
+            self.assertTrue((target / ".modeller/runtime/method/workflows/modeller-agents-build.workflow.json").exists())
+            self.assertTrue((target / ".modeller/runtime/reference-packs/testudo.toml").exists())
+            self.assertTrue((target / ".modeller/runtime/bundles/testudo.bundle.json").exists())
+            self.assertTrue((target / ".modeller/runtime/schemas/run-manifest.schema.json").exists())
+            self.assertTrue((target / ".modeller/runtime/backends.toml").exists())
+            self.assertTrue((target / ".modeller/runtime/vendors.toml").exists())
             self.assertTrue((target / "sitecustomize.py").exists())
             self.assertIn("modeller-agents", (target / "sitecustomize.py").read_text(encoding="utf-8"))
             manifest = json.loads((target / MANIFEST_RELATIVE_PATH).read_text(encoding="utf-8"))
             self.assertEqual(manifest["schema_version"], 1)
             self.assertTrue(manifest["include_runtime_assets"])
+            self.assertEqual(manifest["runtime_root"], ".modeller/runtime")
             self.assertEqual(manifest["python_path_bootstrap"], "sitecustomize.py")
-            self.assertIn("method", manifest["copied_runtime_assets"])
-            self.assertIn("schemas", manifest["copied_runtime_assets"])
-            self.assertIn("vendors.toml", manifest["copied_runtime_assets"])
+            self.assertIn(".modeller/runtime/method", manifest["copied_runtime_assets"])
+            self.assertIn(".modeller/runtime/schemas", manifest["copied_runtime_assets"])
+            self.assertIn(".modeller/runtime/vendors.toml", manifest["copied_runtime_assets"])
             self.assertIn("available", manifest["source_git"])
             self.assertIn(
                 manifest["source_git"]["status"],
@@ -393,6 +394,44 @@ class DoctorCliTests(unittest.TestCase):
 
             mcp = json.loads(target_mcp.read_text(encoding="utf-8"))
             self.assertEqual(mcp, {"mcpServers": {}})
+
+    def test_install_runtime_assets_migrates_legacy_root_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            (target / "method").mkdir()
+            (target / "reference-packs").mkdir()
+            (target / "bundles").mkdir()
+            (target / "schemas").mkdir()
+            (target / "backends.toml").write_text("legacy\n", encoding="utf-8")
+            (target / "vendors.toml").write_text("legacy\n", encoding="utf-8")
+            (target / ".modeller").mkdir()
+            (target / MANIFEST_RELATIVE_PATH).write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "installer": "modeller-agents",
+                        "source_root": str(ROOT),
+                        "target_root": str(target),
+                        "include_runtime_assets": True,
+                        "copied_runtime_assets": [
+                            "method",
+                            "reference-packs",
+                            "bundles",
+                            "schemas",
+                            "backends.toml",
+                            "vendors.toml",
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            install_plugin(ROOT, target, dry_run=False, include_runtime_assets=True)
+
+            self.assertFalse((target / "method").exists())
+            self.assertFalse((target / "backends.toml").exists())
+            self.assertTrue((target / ".modeller/runtime/method").exists())
+            self.assertTrue((target / ".modeller/runtime/backends.toml").exists())
 
     def test_doctor_warns_about_deactivated_domain_on_installed_runtime_target(self) -> None:
         # Installed runtime assets carry the same mirrored disabled domain
@@ -428,9 +467,9 @@ class DoctorCliTests(unittest.TestCase):
 
             self.assertFalse(result.dry_run)
             self.assertTrue((target / ".claude/plugins/modeller").exists())
-            self.assertTrue((target / "method").exists())
-            self.assertTrue((target / "schemas").exists())
-            self.assertTrue((target / "vendors.toml").exists())
+            self.assertTrue((target / ".modeller/runtime/method").exists())
+            self.assertTrue((target / ".modeller/runtime/schemas").exists())
+            self.assertTrue((target / ".modeller/runtime/vendors.toml").exists())
             self.assertTrue((target / "sitecustomize.py").exists())
             manifest = json.loads((target / MANIFEST_RELATIVE_PATH).read_text(encoding="utf-8"))
             self.assertEqual(manifest["source_root"], str(runtime.resolve()))

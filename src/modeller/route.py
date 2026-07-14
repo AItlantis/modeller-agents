@@ -4,28 +4,11 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .capabilities import CAPABILITY_SKILLS, canonical_skill_for_capability
 from .knowledge_packs import resolve_knowledge_selection
 from .reference_packs import validate_reference_pack
+from .runtime import runtime_path
 from .workflow import check_current_step
-
-
-CAPABILITY_SKILLS = {
-    "antagonist-review": "antagonist-review",
-    "backend-align": "backend-align",
-    "backend-contract-check": "backend-contract-check",
-    "backend-scaffold": "backend-scaffold",
-    "backend_run": "backend-contract-check",
-    "run_backend": "backend-contract-check",
-    "memory-recon": "memory-recon",
-    "pipeline-fix": "pipeline-fix",
-    "pipeline-review": "pipeline-review",
-    "pipeline-smoke": "pipeline-smoke",
-    "recon": "memory-recon",
-    "orchestrate": "orchestrate",
-    "review": "review",
-    "source-boundary-check": "source-boundary-check",
-    "workflow": "workflow",
-}
 
 
 @dataclass
@@ -72,13 +55,17 @@ class RouteDecision:
 
 def route_envelope(root: Path, envelope_path: Path, run_id: str | None = None) -> RouteDecision:
     envelope = json.loads(envelope_path.read_text(encoding="utf-8-sig"))
+    return route_payload(root, envelope, run_id=run_id)
+
+
+def route_payload(root: Path, envelope: dict, run_id: str | None = None) -> RouteDecision:
     intent = envelope.get("intent", {})
     policy = envelope.get("execution_policy", {})
     target_repository = intent.get("target_repository") or ""
     requested_capability = intent.get("requested_capability") or "workflow"
 
     requested_capability = str(requested_capability)
-    skill = CAPABILITY_SKILLS.get(requested_capability)
+    skill = canonical_skill_for_capability(requested_capability)
     decision = RouteDecision(
         target_repository=target_repository,
         skill=skill or "workflow",
@@ -93,7 +80,7 @@ def route_envelope(root: Path, envelope_path: Path, run_id: str | None = None) -
         decision.errors.append("intent.target_repository is required for deterministic routing")
         return decision
 
-    bundle_path = root / "bundles" / f"{target_repository}.bundle.json"
+    bundle_path = runtime_path(root, "bundles", f"{target_repository}.bundle.json")
     if not bundle_path.exists():
         decision.errors.append(f"no bundle found for target repository {target_repository!r}")
         return decision

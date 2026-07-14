@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .runtime import DEFAULT_RUNTIME_RELATIVE_PATH, MANIFEST_RELATIVE_PATH, load_install_manifest
+
 
 @dataclass
 class InstallResult:
@@ -24,7 +26,6 @@ class InstallResult:
 
 RUNTIME_DIRS = ["method", "reference-packs", "bundles", "schemas"]
 RUNTIME_FILES = ["backends.toml", "vendors.toml"]
-MANIFEST_RELATIVE_PATH = ".modeller/install-manifest.json"
 PACKAGED_RUNTIME_ROOT = Path(__file__).resolve().parent / "runtime"
 PYTHON_BOOTSTRAP_RELATIVE_PATH = "sitecustomize.py"
 PYTHON_BOOTSTRAP_MARKER = "# managed-by: modeller-agents install"
@@ -48,15 +49,19 @@ def install_plugin(
     settings_dst = target / ".claude/settings.json"
     mcp_src = source_root / ".mcp.json.example"
     mcp_dst = target / ".mcp.json"
+    runtime_dst = target / DEFAULT_RUNTIME_RELATIVE_PATH
+    legacy_runtime_assets = _legacy_runtime_assets_to_remove(target) if include_runtime_assets else []
 
     result.actions.append(f"copy plugin {plugin_src} -> {plugin_dst}")
     result.actions.append(f"merge settings from {settings_src} -> {settings_dst}")
     result.actions.append(f"create or reconcile MCP config from {mcp_src} -> {mcp_dst}")
     if include_runtime_assets:
+        for rel in legacy_runtime_assets:
+            result.actions.append(f"remove legacy root runtime asset {target / rel}")
         for rel in RUNTIME_DIRS:
-            result.actions.append(f"copy runtime directory {source_root / rel} -> {target / rel}")
+            result.actions.append(f"copy runtime directory {source_root / rel} -> {runtime_dst / rel}")
         for rel in RUNTIME_FILES:
-            result.actions.append(f"copy runtime file {source_root / rel} -> {target / rel}")
+            result.actions.append(f"copy runtime file {source_root / rel} -> {runtime_dst / rel}")
     result.actions.append(f"write Python import bootstrap {target / PYTHON_BOOTSTRAP_RELATIVE_PATH}")
     if install_python_path:
         result.actions.append(f"write user-site Python path file {Path(site.getusersitepackages()) / USER_SITE_PTH}")
@@ -71,10 +76,11 @@ def install_plugin(
     _merge_settings(settings_src, settings_dst)
     _reconcile_mcp_config(mcp_src, mcp_dst)
     if include_runtime_assets:
+        _remove_legacy_runtime_assets(target, legacy_runtime_assets)
         for rel in RUNTIME_DIRS:
-            _copytree_replace(source_root / rel, target / rel)
+            _copytree_replace(source_root / rel, runtime_dst / rel)
         for rel in RUNTIME_FILES:
-            _copy_file(source_root / rel, target / rel)
+            _copy_file(source_root / rel, runtime_dst / rel)
     _write_python_bootstrap(source_root, target)
     python_path_file = _write_user_site_python_path(source_root) if install_python_path else None
     _write_install_manifest(source_root, target, include_runtime_assets, python_path_file=python_path_file)
@@ -103,6 +109,24 @@ def _has_runtime_assets(root: Path) -> bool:
     return all(path.exists() for path in required)
 
 
+def _legacy_runtime_assets_to_remove(target: Path) -> list[str]:
+    manifest = load_install_manifest(target)
+    copied = manifest.get("copied_runtime_assets", [])
+    if not isinstance(copied, list):
+        return []
+    legacy = set(RUNTIME_DIRS + RUNTIME_FILES)
+    return sorted(rel for rel in copied if isinstance(rel, str) and rel in legacy and (target / rel).exists())
+
+
+def _remove_legacy_runtime_assets(target: Path, rel_paths: list[str]) -> None:
+    for rel in rel_paths:
+        path = target / rel
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+
+
 def _write_install_manifest(
     root: Path,
     target: Path,
@@ -114,8 +138,8 @@ def _write_install_manifest(
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     copied_runtime_assets: list[str] = []
     if include_runtime_assets:
-        copied_runtime_assets.extend(RUNTIME_DIRS)
-        copied_runtime_assets.extend(RUNTIME_FILES)
+        copied_runtime_assets.extend(f"{DEFAULT_RUNTIME_RELATIVE_PATH}/{rel}" for rel in RUNTIME_DIRS)
+        copied_runtime_assets.extend(f"{DEFAULT_RUNTIME_RELATIVE_PATH}/{rel}" for rel in RUNTIME_FILES)
     payload = {
         "schema_version": 1,
         "installed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -124,6 +148,7 @@ def _write_install_manifest(
         "source_git": _source_git(root),
         "target_root": str(target),
         "include_runtime_assets": include_runtime_assets,
+        "runtime_root": DEFAULT_RUNTIME_RELATIVE_PATH if include_runtime_assets else "",
         "copied_plugin": ".claude/plugins/modeller",
         "merged_settings": ".claude/settings.json",
         "created_mcp_config": ".mcp.json",

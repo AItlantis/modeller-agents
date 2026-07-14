@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -136,6 +139,126 @@ class TraceabilityTests(unittest.TestCase):
             self.assertEqual(Path(payload["manifest"]).resolve(), manifest_path.resolve())
             self.assertTrue(manifest_path.exists())
 
+    def test_workflow_close_module_cli_fails_incomplete_run_with_manifest_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            init_workflow(root, "run-cli-incomplete")
+
+            result = _run_modeller_cli(root, "workflow", "close", "--run-id", "run-cli-incomplete")
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"], payload)
+            self.assertTrue(payload["manifest_check"]["ok"], payload)
+            self.assertFalse(payload["close_gate"]["ok"], payload)
+            self.assertTrue(
+                any("workflow state status" in error for error in payload["close_gate"]["errors"]),
+                payload,
+            )
+            manifest_path = root / ".modeller" / "runs" / "run-cli-incomplete" / "run-manifest.json"
+            self.assertTrue(manifest_path.exists())
+
+    def test_workflow_close_module_cli_fails_when_expected_receipt_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            init_workflow(root, "run-cli-missing-receipt")
+            _complete_full_workflow(root, "run-cli-missing-receipt")
+            _mark_context_receipt_expected(root, "run-cli-missing-receipt")
+
+            result = _run_modeller_cli(root, "workflow", "close", "--run-id", "run-cli-missing-receipt")
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"], payload)
+            self.assertFalse(payload["close_gate"]["ok"], payload)
+            receipt_check = next(
+                check for check in payload["close_gate"]["checks"] if check["id"] == "context_receipt_presence"
+            )
+            self.assertFalse(receipt_check["ok"], receipt_check)
+            self.assertTrue(any("ContextReceipt is required" in error for error in receipt_check["errors"]), payload)
+
+    def test_workflow_close_module_cli_fails_completed_run_without_context_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            init_workflow(root, "run-cli-no-receipt")
+            _complete_full_workflow(root, "run-cli-no-receipt")
+
+            result = _run_modeller_cli(root, "workflow", "close", "--run-id", "run-cli-no-receipt")
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"], payload)
+            receipt_check = next(
+                check for check in payload["close_gate"]["checks"] if check["id"] == "context_receipt_presence"
+            )
+            self.assertFalse(receipt_check["ok"], receipt_check)
+            self.assertTrue(receipt_check["expected"], receipt_check)
+            self.assertEqual(receipt_check["receipt_count"], 0)
+            self.assertTrue(any("ContextReceipt is required" in error for error in receipt_check["errors"]), payload)
+
+    def test_workflow_close_module_cli_fails_supplied_invalid_context_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["orchestrate"])
+            envelope = _write_envelope(root, "unknown-capability", run_id="run-cli-bad-receipt")
+            init_workflow(root, "run-cli-bad-receipt")
+            _complete_full_workflow(root, "run-cli-bad-receipt")
+
+            result = _run_modeller_cli(
+                root,
+                "workflow",
+                "close",
+                "--run-id",
+                "run-cli-bad-receipt",
+                "--envelope",
+                str(envelope),
+            )
+
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"], payload)
+            self.assertFalse(payload["manifest_check"]["ok"], payload)
+            self.assertTrue(
+                any("selection.ok must be true" in error for error in payload["manifest_check"]["errors"]),
+                payload,
+            )
+            receipt_check = next(
+                check for check in payload["close_gate"]["checks"] if check["id"] == "context_receipt_presence"
+            )
+            self.assertFalse(receipt_check["ok"], receipt_check)
+
+    def test_workflow_close_module_cli_valid_run_has_traceability_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["orchestrate"])
+            envelope = _write_envelope(root, "orchestrate", run_id="run-cli-valid")
+            init_workflow(root, "run-cli-valid")
+            _complete_full_workflow(root, "run-cli-valid")
+
+            result = _run_modeller_cli(
+                root,
+                "workflow",
+                "close",
+                "--run-id",
+                "run-cli-valid",
+                "--envelope",
+                str(envelope),
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ok"], payload)
+            self.assertTrue(payload["manifest_check"]["ok"], payload)
+            self.assertTrue(payload["close_gate"]["ok"], payload)
+            checks = {check["id"]: check for check in payload["close_gate"]["checks"]}
+            self.assertTrue(checks["returned_edits_evidence"]["ok"], checks)
+            self.assertTrue(checks["context_receipt_presence"]["ok"], checks)
+            self.assertEqual(checks["context_receipt_presence"]["receipt_count"], 1)
+            self.assertTrue(checks["final_parity_evidence"]["ok"], checks)
+            manifest = json.loads(Path(payload["manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(len(manifest["context_receipts"]), 1)
+            self.assertTrue(all(ref.get("sha256") for ref in manifest["artifacts"]), manifest["artifacts"])
+
 
 def _copy_minimal_workflow_root(tmp: Path) -> Path:
     root = tmp / "repo"
@@ -200,6 +323,20 @@ def _write_envelope(root: Path, requested_capability: str, run_id: str) -> Path:
         encoding="utf-8",
     )
     return envelope
+
+
+def _run_modeller_cli(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    src = str(ROOT / "src")
+    env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    return subprocess.run(
+        [sys.executable, "-m", "modeller.cli", "--root", str(root), *args],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def _mark_context_receipt_expected(root: Path, run_id: str) -> None:

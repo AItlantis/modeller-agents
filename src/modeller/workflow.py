@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .runtime import runtime_path
+
 
 DEFAULT_WORKFLOW = "modeller-agents-build"
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -61,7 +63,7 @@ def init_workflow(root: Path, run_id: str, workflow_id: str = DEFAULT_WORKFLOW) 
     }
     state["steps"][0]["status"] = "in_progress"
 
-    template = (root / "method/templates/workflow-artifact.md").read_text(encoding="utf-8")
+    template = runtime_path(root, "method", "templates", "workflow-artifact.md").read_text(encoding="utf-8")
     for step in workflow["steps"]:
         for artifact in step["required_artifacts"]:
             path = artifact_path(root, workflow, run_id, artifact)
@@ -83,7 +85,7 @@ def init_workflow(root: Path, run_id: str, workflow_id: str = DEFAULT_WORKFLOW) 
 
 
 def load_workflow(root: Path, workflow_id: str = DEFAULT_WORKFLOW) -> dict:
-    path = root / "method/workflows" / f"{workflow_id}.workflow.json"
+    path = runtime_path(root, "method", "workflows", f"{workflow_id}.workflow.json")
     return json.loads(path.read_text(encoding="utf-8"))
 
 

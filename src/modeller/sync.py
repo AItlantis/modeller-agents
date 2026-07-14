@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .runtime import runtime_path
 from .toml_compat import load_toml
 
 
@@ -19,7 +20,7 @@ class SyncPlan:
 
 
 def plan_sync(root: Path, vendor: str) -> SyncPlan:
-    vendors = load_toml(root / "vendors.toml").get("vendor", {})
+    vendors = load_toml(runtime_path(root, "vendors.toml")).get("vendor", {})
     if vendor not in vendors:
         raise KeyError(f"unknown vendor {vendor!r}")
     cfg = vendors[vendor]
@@ -42,5 +43,5 @@ def plan_sync(root: Path, vendor: str) -> SyncPlan:
 
 
 def list_vendors(root: Path) -> list[str]:
-    return sorted(load_toml(root / "vendors.toml").get("vendor", {}).keys())
+    return sorted(load_toml(runtime_path(root, "vendors.toml")).get("vendor", {}).keys())
 

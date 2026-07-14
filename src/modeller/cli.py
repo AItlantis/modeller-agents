@@ -8,11 +8,16 @@ from .backend import check_backend, format_backend_check, list_backend_ids
 from .doctor import run_doctor
 from .install import install_plugin
 from .memory_transport import transport_memory_candidate
+from .planning import build_execution_plan, write_context_envelope
 from .readiness import build_readiness_report
 from .run import run_backend_pipeline, validate_backend_json, validate_result_json
 from .route import route_envelope
 from .sync import list_vendors, plan_sync
-from .traceability import build_context_receipt, build_run_manifest, evaluate_close_gate, write_run_manifest
+from .traceability import (
+    build_run_manifest,
+    validate_run_manifest,
+    write_run_manifest,
+)
 from .workflow import advance_workflow, check_current_step, complete_artifact, format_status, init_workflow
 
 
@@ -62,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument(
         "--include-runtime-assets",
         action="store_true",
-        help="Also copy method, reference-packs, bundles, backends.toml, and vendors.toml into the target.",
+        help="Also copy runtime assets under .modeller/runtime in the target.",
     )
     install.add_argument(
         "--install-python-path",
@@ -83,6 +88,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--run-id",
         help="Deterministic workflow run id override. Takes precedence over the envelope's run_id when set.",
     )
+
+    plan = sub.add_parser("plan", help="Draft a prompt-to-approved-execution plan without executing it.")
+    plan.add_argument("--root", dest="command_root", help="Repository root to inspect.")
+    plan.add_argument("--prompt", required=True, help="User prompt or work request to draft from.")
+    plan.add_argument("--target-repository", help="Target repository/bundle id. Inferred from prompt when unambiguous.")
+    plan.add_argument("--requested-capability", help="Requested capability. Inferred from prompt when unambiguous.")
+    plan.add_argument("--domain", action="append", default=[], help="Knowledge domain to request. Repeatable.")
+    plan.add_argument("--run-id", help="Workflow run id to include in the draft envelope.")
+    workflow_policy = plan.add_mutually_exclusive_group()
+    workflow_policy.add_argument("--requires-workflow", action="store_true", help="Require an active workflow gate.")
+    workflow_policy.add_argument("--no-requires-workflow", action="store_true", help="Do not require a workflow gate.")
+    plan.add_argument("--max-risk-level", default="low", choices=["low", "medium", "high"])
+    plan.add_argument("--no-consent-required", action="store_true", help="Mark consent as not required for low-risk plans.")
+    plan.add_argument("--envelope-output", help="Write the drafted context envelope to this path.")
+    plan.add_argument("--json", action="store_true", help="Emit the full machine-readable plan.")
 
     run = sub.add_parser("run", help="Run a declared backend pipeline through backend.json.runner.command.")
     run.add_argument("--root", dest="command_root", help="Repository root to inspect.")
@@ -188,6 +208,29 @@ def main(argv: list[str] | None = None) -> int:
         decision = route_envelope(root, Path(args.envelope), run_id=args.run_id)
         print(decision.format())
         return 0 if decision.ok else 1
+    if args.command == "plan":
+        requires_workflow = None
+        if args.requires_workflow:
+            requires_workflow = True
+        elif args.no_requires_workflow:
+            requires_workflow = False
+        envelope_output = Path(args.envelope_output) if args.envelope_output else None
+        plan = build_execution_plan(
+            root=root,
+            prompt=args.prompt,
+            target_repository=args.target_repository,
+            requested_capability=args.requested_capability,
+            domains=args.domain,
+            run_id=args.run_id,
+            requires_workflow=requires_workflow,
+            consent_required=not args.no_consent_required,
+            max_risk_level=args.max_risk_level,
+            envelope_output=envelope_output,
+        )
+        if envelope_output is not None:
+            write_context_envelope(envelope_output, plan.context_envelope)
+        print(json.dumps(plan.to_dict(), indent=2) if args.json else plan.format())
+        return 0 if plan.ok else 1
     if args.command == "run":
         result = run_backend_pipeline(
             root=root,
@@ -247,18 +290,32 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(manifest, indent=2))
             return 0
         if args.workflow_command == "close":
-            context_receipts = []
-            if args.envelope:
-                context_receipts.append(build_context_receipt(root, Path(args.envelope), run_id=args.run_id))
             path = write_run_manifest(
                 root=root,
                 run_id=args.run_id,
                 envelope_path=Path(args.envelope) if args.envelope else None,
                 output_path=Path(args.manifest_output) if args.manifest_output else None,
             )
-            gate = evaluate_close_gate(root, args.run_id, context_receipts=context_receipts)
-            print(json.dumps({"ok": gate["ok"], "manifest": str(path), "close_gate": gate}, indent=2))
-            return 0 if gate["ok"] else 1
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            manifest_check = validate_run_manifest(manifest)
+            gate = manifest["gates"]["close"]
+            ok = gate["ok"] and manifest_check.ok
+            print(
+                json.dumps(
+                    {
+                        "ok": ok,
+                        "manifest": str(path),
+                        "manifest_check": {
+                            "ok": manifest_check.ok,
+                            "errors": manifest_check.errors,
+                            "warnings": manifest_check.warnings,
+                        },
+                        "close_gate": gate,
+                    },
+                    indent=2,
+                )
+            )
+            return 0 if ok else 1
     raise AssertionError(args.command)
 
 

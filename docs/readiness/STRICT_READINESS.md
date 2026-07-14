@@ -2,7 +2,7 @@
 
 Strict readiness is the release and CI gate for the central `modeller-agents` runtime. It is intentionally stricter than the advisory local doctor check: local development may tolerate planned vendors, draft reference packs, sibling schema fallback, and unproven backend wiring; release readiness must not.
 
-Installing with `--include-runtime-assets` copies central runtime assets into a target project for local orchestration. It does not satisfy strict readiness by itself: copied draft packs remain draft, copied vendor registry entries remain planned/unpinned, and copied backend registry entries remain unproven until the backend smoke passes.
+Installing with `--include-runtime-assets` copies central runtime assets under `.modeller/runtime/` in a target project for local orchestration. It does not satisfy strict readiness by itself: copied draft packs remain draft, copied vendor registry entries remain planned/unpinned, and copied backend registry entries remain unproven until the backend smoke passes.
 
 Run all commands from the workspace root:
 

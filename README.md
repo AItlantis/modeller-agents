@@ -47,7 +47,7 @@ examples/                    sample context envelopes
 docs/                        architecture, workflow, readiness, and command references
 schemas/                     RunManifest and ContextReceipt JSON Schemas
 tools/ · vendor/             tooling and the planned vendor subtree registry surface
-tests/                       pytest suite (66 tests)
+tests/                       pytest suite (83 tests)
 ```
 
 ## Installation & usage
@@ -71,7 +71,8 @@ modeller doctor --root AItlantis\modeller-agents
 ```
 
 Wheel builds force-include the plugin surface and runtime assets under `modeller/runtime`, so an
-installed `modeller` can operate from packaged assets when `--root` is not a source checkout.
+installed `modeller` can install from packaged assets when `--root` is not a source checkout. Target
+repositories keep their copied runtime snapshot under `.modeller/runtime/`, not at repository root.
 
 ### CLI commands
 
@@ -98,8 +99,8 @@ python -m modeller.cli readiness --root . --json
 ```
 
 Other surfaces: `skills`, `backends [--check <id>]`, `sync [<vendor>]`, `install <target>
-[--apply] [--include-runtime-assets]`, `validate [--backend-json|--result-json]`, `run`, and the
-`workflow advance` / `complete-artifact` gates. See [docs/COMMANDS.md](docs/COMMANDS.md).
+[--apply] [--include-runtime-assets]`, `validate [--backend-json|--result-json]`, `plan`, `run`,
+and the `workflow advance` / `complete-artifact` gates. See [docs/COMMANDS.md](docs/COMMANDS.md).
 
 The canonical CLI remains `python -m modeller.cli` / `modeller`. The legacy
 `python -m modeller_agents.cli` import path is only a compatibility alias.
@@ -109,8 +110,9 @@ The canonical CLI remains `python -m modeller.cli` / `modeller`. The legacy
 `route` reads a **bundle** to pick reference packs and confirm the skill; the selected **reference
 packs** authorize the skill; **method** checklists and templates (for example the source-boundary
 checklist) drive the workflow. Installing with `--include-runtime-assets` copies `method/`,
-`reference-packs/`, `bundles/`, `schemas/`, `backends.toml`, and `vendors.toml` into a target and records source
-provenance in `.modeller/install-manifest.json`; without it, only the plugin wiring is copied.
+`reference-packs/`, `bundles/`, `schemas/`, `backends.toml`, and `vendors.toml` under
+`.modeller/runtime/` in a target and records source provenance in `.modeller/install-manifest.json`;
+without it, only the plugin wiring is copied.
 
 ### Knowledge-pack validation and vault parity
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .backend import BackendCheck, check_backend_contract, check_backend_manifest, resolve_backend_root
 from .contracts import validate_with_contract_schema
+from .runtime import runtime_path
 from .toml_compat import load_toml
 
 
@@ -157,7 +158,7 @@ def run_backend_pipeline(
     backend_root: Path | None = None,
     timeout_s: int = 3600,
 ) -> RunResult:
-    registry = load_toml(root / "backends.toml").get("backend", {})
+    registry = load_toml(runtime_path(root, "backends.toml")).get("backend", {})
     if backend_id not in registry:
         return RunResult(backend_id=backend_id, pipeline_id=pipeline_id, command=[], errors=["backend is not registered"])
 

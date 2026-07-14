@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .runtime import installed_source_root, runtime_path
 from .toml_compat import load_toml
 
 
@@ -72,7 +73,7 @@ class KnowledgeResolution:
 
 def load_vault_exports(root: Path) -> VaultExports:
     """Load current vault exports without requiring committed generated JSON files."""
-    source_root = _installed_source_root(root) or root
+    source_root = installed_source_root(root) or root
     vault = source_root.parent / "modelling-knowledge"
     memory_src = source_root.parent / "modeller-memory" / "src"
     warnings: list[str] = []
@@ -111,28 +112,13 @@ def load_vault_exports(root: Path) -> VaultExports:
         return VaultExports(index={}, domains={}, warnings=[f"cannot load vault exports: {exc}"])
 
 
-def _installed_source_root(root: Path) -> Path | None:
-    manifest = root / ".modeller" / "install-manifest.json"
-    try:
-        payload = json.loads(manifest.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
-    if payload.get("installer") != "modeller-agents":
-        return None
-    source_root = payload.get("source_root")
-    if not isinstance(source_root, str) or not source_root.strip():
-        return None
-    path = Path(source_root)
-    return path if path.exists() else None
-
-
 def validate_domain_registry(
     root: Path,
     exports: VaultExports | None = None,
     warnings: list[str] | None = None,
 ) -> list[str]:
     errors: list[str] = []
-    path = root / "reference-packs" / "domains" / "_registry.toml"
+    path = runtime_path(root, "reference-packs", "domains", "_registry.toml")
     if not path.exists():
         errors.append("missing knowledge domain registry: reference-packs/domains/_registry.toml")
         return errors
@@ -157,7 +143,7 @@ def validate_domain_registry(
         pack = spec.get("pack")
         if not isinstance(pack, str) or not pack:
             errors.append(f"domain {dom_id}: pack must be a non-empty string")
-        elif not (root / pack).exists():
+        elif not runtime_path(root, pack).exists():
             errors.append(f"domain {dom_id}: pack does not exist: {pack}")
         aliases = spec.get("aliases")
         if not isinstance(aliases, list) or not aliases:
@@ -332,7 +318,7 @@ def resolve_knowledge_selection(
 
 
 def validate_knowledge_pack(root: Path, rel_path: str, exports: VaultExports | None = None) -> KnowledgePackCheck:
-    path = root / rel_path
+    path = runtime_path(root, rel_path)
     check = KnowledgePackCheck(path=path)
     try:
         data = load_toml(path)
@@ -511,7 +497,7 @@ def load_domain_pack_registry(root: Path) -> tuple[dict[str, str], dict[str, str
 
 
 def load_domain_registry_specs(root: Path) -> tuple[dict[str, dict], dict[str, str], list[str]]:
-    path = root / "reference-packs" / "domains" / "_registry.toml"
+    path = runtime_path(root, "reference-packs", "domains", "_registry.toml")
     try:
         registry = load_toml(path)
     except FileNotFoundError:

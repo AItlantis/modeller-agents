@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .runtime import runtime_path
 from .toml_compat import load_toml
 
 
@@ -25,7 +26,7 @@ class ReferencePackCheck:
 
 
 def validate_reference_pack(root: Path, rel_path: str) -> ReferencePackCheck:
-    path = root / rel_path
+    path = runtime_path(root, rel_path)
     check = ReferencePackCheck(path=path)
     try:
         data = load_toml(path)
