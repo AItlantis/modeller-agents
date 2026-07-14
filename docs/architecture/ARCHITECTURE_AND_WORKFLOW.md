@@ -1,7 +1,7 @@
 # Modeller-Agents Architecture And Workflow
 
 **Status:** current operational overview
-**Date:** 2026-07-11
+**Date:** 2026-07-11 · **Updated:** 2026-07-14 (added §5a knowledge axis + F-A current state)
 **Owner:** `modeller-agents`
 
 This document is the global map for the current `modeller-agents` scaffold. It explains what exists now, what the runtime owns, how work is routed, and which evidence gates must pass before the system is treated as ready.
@@ -88,6 +88,24 @@ Routing is data-backed, not prompt-only.
 7. Medium and high risk work requires explicit consent before execution.
 
 Reference packs are data. They let central skills remain reusable while carrying repository-specific constraints such as write scopes, verification commands, local invariants, private boundaries, and backend safety rules.
+
+### 5a. Knowledge Axis (implemented, currently deactivated) — added 2026-07-14
+
+Routing also has a second, orthogonal axis: `intent.domains[]` resolve against a data-only domain
+registry to select `kind = "knowledge"` packs that reference accepted notes in `modelling-knowledge`
+by id. It is additive — envelopes with no `domains[]` route exactly as the repository axis above.
+
+- The route reads the vault's metadata export by shelling out to `modeller-memory`'s
+  `vault_doctor export-index` / `export-domains` against the sibling `modelling-knowledge` checkout
+  (not the committed JSON), then validates each candidate pack (digest parity, domain
+  active/routable, note accepted/exposable).
+- Retrieval is **references and metadata only** — note ids, purpose, sensitivity. Note bodies are
+  never loaded; the progressive Level 0–3 loading in the vault alignment plan is not implemented.
+- **Current state (F-A):** the vault has deactivated all scoped domains (`draft`/`routable:false`),
+  so a route requesting a domain fails and selects zero knowledge packs, and `doctor` exits 1 by
+  design. The `accessibility` pilot pack is inert until re-activation (decision 0010 accepted at
+  general scope + the vault DR-1 attribution cure). See `docs/architecture/BOUNDARIES.md` and
+  `docs/architecture/typed-packs-open-decisions.md`.
 
 ## 6. Deterministic Workflow
 

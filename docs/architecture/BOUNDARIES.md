@@ -32,7 +32,22 @@ context envelope
   -> structured result
 ```
 
-## Proposed: Typed Packs & Knowledge Axis (draft)
+## Typed Packs & Knowledge Axis (implemented, currently deactivated)
 
-A second, orthogonal knowledge axis is proposed alongside today's repository-selection axis: routing would also resolve `intent.domains[]` against a data-only registry to load knowledge packs that link into `modelling-knowledge`, without adding domain names to code or growing skill count. See `docs/architecture/typed-packs-knowledge-axis.md` for the draft design and `modelling-knowledge/decisions/0005-knowledge-vault-domain-scope.md` (pending) for the related vault-scope ruling.
+A second, orthogonal knowledge axis runs alongside the repository-selection axis: routing resolves
+`intent.domains[]` against a data-only domain registry to load knowledge packs that link into
+`modelling-knowledge` by note id — without adding domain names to code or growing skill count.
+Knowledge packs are **references, never copies** (route retrieves note ids/metadata only, no bodies).
+
+Status as of 2026-07-14: the axis and the `accessibility` pilot pack
+(`reference-packs/domains/accessibility.toml`) are implemented and test-covered, but the vault has
+**deactivated domain routability (F-A)** — `modelling-knowledge/registry/knowledge-domains.yml` marks
+`product`/`accessibility`/`transport` `draft`/`routable:false`. So the pilot pack is **rejected at
+route and `modeller.cli doctor` exits 1 by design** (asserted by `tests/test_reference_packs.py` and
+`tests/test_doctor_cli.py`). Re-activation is gated on this repo accepting the D3–D6 conditions at
+general scope (decision 0010, still `proposed`) and the vault-side DR-1 attribution cure.
+
+See `docs/architecture/typed-packs-knowledge-axis.md` (design), `docs/architecture/typed-packs-open-decisions.md`
+(D3–D6 rulings, pilot-scope), and `modelling-knowledge/decisions/0005-knowledge-vault-domain-scope.md`
+(**accepted** vault-scope ruling).
 
