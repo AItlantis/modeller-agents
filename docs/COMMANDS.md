@@ -75,9 +75,10 @@ The installer copies local plugin wiring only by default. The central runtime re
 - `method/` workflow definitions, templates, tasks, and checklists;
 - `reference-packs/` repository facts consumed by central skills;
 - `bundles/` mappings from target repositories to skills and reference packs;
+- `schemas/` RunManifest and ContextReceipt JSON Schemas;
 - `backends.toml`, `vendors.toml`, and contract validation support.
 
-`--include-runtime-assets` copies `method/`, `reference-packs/`, `bundles/`, `backends.toml`, and `vendors.toml` into the target. It is a snapshot copy for local orchestration. It does not sync vendors, activate draft packs, or prove backend runtime readiness.
+`--include-runtime-assets` copies `method/`, `reference-packs/`, `bundles/`, `schemas/`, `backends.toml`, and `vendors.toml` into the target. It is a snapshot copy for local orchestration. It does not sync vendors, activate draft packs, or prove backend runtime readiness.
 
 When run from a source checkout, `install` reads assets from `--root`. When run from a wheel-installed CLI and `--root` is not a source checkout, it falls back to packaged assets force-included under `modeller/runtime`.
 
@@ -139,6 +140,8 @@ python -m modeller.cli workflow --root AItlantis\modeller-agents status --run-id
 python -m modeller.cli workflow --root AItlantis\modeller-agents check --run-id build-001
 python -m modeller.cli workflow --root AItlantis\modeller-agents complete-artifact --run-id build-001 --artifact brief --updated-by orchestrator --evidence "..." --output "..."
 python -m modeller.cli workflow --root AItlantis\modeller-agents advance --run-id build-001
+python -m modeller.cli workflow --root AItlantis\modeller-agents manifest --run-id build-001 --envelope path\to\envelope.json
+python -m modeller.cli workflow --root AItlantis\modeller-agents close --run-id build-001 --envelope path\to\envelope.json
 python -m modeller.cli workflow --root AItlantis\modeller-agents status --run-id build-001
 ```
 
@@ -172,3 +175,16 @@ Recommended operator loop:
 7. Run `status` again and use that persisted state as the starting point for the next step.
 
 Do not treat a subagent "complete" message as a gate result or as standalone evidence. The gate result is the combination of completed current-step artifacts, a passing `check`, and a successful `advance`.
+
+### RunManifest, ContextReceipt, and Close
+
+`workflow manifest` emits a machine-readable RunManifest for an initialized run. The manifest references the workflow definition, workflow state, and every workflow artifact by id, repository-relative path, SHA-256 digest, and size. It does not copy artifact bodies. Pass `--envelope` to add a ContextReceipt for the route context; the receipt records the retrieval query, selected bundle, reference packs, knowledge packs, budget, permissions, and hashed context files.
+
+`workflow close` writes `.modeller/runs/<run-id>/run-manifest.json` unless `--manifest-output` is supplied, then prints the close gate status. Close fails unless:
+
+- workflow state is `complete`;
+- all workflow artifacts pass their deterministic gates;
+- the implementation artifact passes its returned-edits evidence gate, including `changed files`, `commands run`, and `unresolved gaps`;
+- workflow definition, state, and artifact references all carry SHA-256 digests.
+
+Schemas live in `schemas/run-manifest.schema.json` and `schemas/context-receipt.schema.json`. The canonical command remains `python -m modeller.cli` / `modeller`; `python -m modeller_agents.cli` is compatibility only.

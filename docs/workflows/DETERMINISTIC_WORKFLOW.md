@@ -112,6 +112,14 @@ $env:PYTHONPATH='AItlantis\modeller-agents\src'
 
 Repeat steps 2 through 7 until the workflow reaches the final state. The auditable fact that a step completed is the successful `advance` result and the updated workflow state, not any intermediate agent statement.
 
+8. Close the run by writing a RunManifest and checking the close gate.
+
+   ```powershell
+   python -m modeller.cli workflow --root AItlantis\modeller-agents close --run-id build-001 --envelope path\to\envelope.json
+   ```
+
+   `close` writes `.modeller/runs/<run_id>/run-manifest.json` and returns non-zero unless the workflow state is `complete`, every artifact gate passes, the implementation artifact proves returned edits and verification evidence, and workflow/state/artifact references all include SHA-256 digests. A subagent completion message is never sufficient for close.
+
 ## Orchestration Requires A Workflow (Coupling)
 
 Routing to the `orchestrate` skill — or any envelope whose `execution_policy.requires_workflow` is `true` — now requires a named, initialized deterministic workflow run whose current gate passes. `route_envelope` reads the run id from `execution_policy.run_id` (falling back to `intent.run_id`), or accepts an explicit override.
@@ -148,6 +156,10 @@ python -m modeller.cli workflow --root AItlantis\modeller-agents status --run-id
 python -m modeller.cli workflow --root AItlantis\modeller-agents check --run-id build-001
 python -m modeller.cli workflow --root AItlantis\modeller-agents complete-artifact --run-id build-001 --artifact brief --updated-by orchestrator --evidence "..." --output "..."
 python -m modeller.cli workflow --root AItlantis\modeller-agents advance --run-id build-001
+python -m modeller.cli workflow --root AItlantis\modeller-agents manifest --run-id build-001 --envelope path\to\envelope.json
+python -m modeller.cli workflow --root AItlantis\modeller-agents close --run-id build-001 --envelope path\to\envelope.json
 ```
 
 `advance` fails until the current step's required artifacts pass the gate. After `advance` succeeds, run `status` before starting the next step so the operator is working from the persisted workflow state.
+
+`manifest` and `close` use `schemas/run-manifest.schema.json` and `schemas/context-receipt.schema.json` as the traceability contract. Both surfaces reference artifacts by id, path, and digest instead of embedding artifact content.

@@ -22,7 +22,7 @@ class InstallResult:
         return "\n".join(lines)
 
 
-RUNTIME_DIRS = ["method", "reference-packs", "bundles"]
+RUNTIME_DIRS = ["method", "reference-packs", "bundles", "schemas"]
 RUNTIME_FILES = ["backends.toml", "vendors.toml"]
 MANIFEST_RELATIVE_PATH = ".modeller/install-manifest.json"
 PACKAGED_RUNTIME_ROOT = Path(__file__).resolve().parent / "runtime"

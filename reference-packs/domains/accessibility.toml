@@ -2,10 +2,10 @@ schema_version = 1
 id = "accessibility"
 kind = "knowledge"
 domain = "accessibility"
-status = "active"
+status = "draft"
 source_vault = "modelling-knowledge"
 source_domain_notes_digest = "sha256:6c0373bcefe724ef101035b55c48adcf3329b8fd11f845c0f43c38c10e37340b"
-source_domains_digest = "sha256:cbf725ac27409d6cfcaf9dbd1a6de1e2c30edda600b2795a94feab17f1051e0d"
+source_domains_digest = "sha256:e083574d5a765822be3e1bcf5bd5df03bdad5e700f14bc9790d4c72fe22e38fd"
 required_scopes = ["internal-agent"]
 max_sensitivity = "public"
 

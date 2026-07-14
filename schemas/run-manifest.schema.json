@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.local/schemas/run-manifest.schema.json",
+  "title": "RunManifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "algorithm_version",
+    "created_at",
+    "run",
+    "workflow",
+    "artifacts",
+    "gates"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "manifest_id": { "type": "string", "minLength": 1 },
+    "algorithm_version": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "run": {
+      "type": "object",
+      "required": ["run_id", "workflow_id", "status", "current_step_id"],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1 },
+        "workflow_id": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["running", "complete"] },
+        "current_step_id": { "type": "string", "minLength": 1 },
+        "artifact_root": { "type": "string" }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "required": ["definition_ref", "state_ref", "steps"],
+      "properties": {
+        "definition_ref": { "$ref": "#/$defs/artifact_ref" },
+        "state_ref": { "$ref": "#/$defs/artifact_ref" },
+        "steps": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "context_receipts": {
+      "type": "array",
+      "items": { "$ref": "context-receipt.schema.json" }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact_ref" }
+    },
+    "subagents": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "outputs": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "gates": {
+      "type": "object",
+      "required": ["current_step", "all_steps", "close"],
+      "properties": {
+        "current_step": { "type": "object" },
+        "all_steps": { "type": "object" },
+        "close": {
+          "type": "object",
+          "required": ["ok", "checks", "errors"],
+          "properties": {
+            "ok": { "type": "boolean" },
+            "checks": {
+              "type": "array",
+              "items": { "type": "object" }
+            },
+            "errors": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "candidate_links": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  },
+  "$defs": {
+    "artifact_ref": {
+      "type": "object",
+      "required": ["id", "kind", "path", "sha256"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer" }
+      }
+    }
+  }
+}

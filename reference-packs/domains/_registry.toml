@@ -2,11 +2,11 @@ schema_version = 1
 source_vault = "modelling-knowledge"
 source_registry = "registry/knowledge-domains.yml"
 registry_owner = "modelling-knowledge"
-status = "active"
+status = "draft"
 
 [domains.accessibility]
-status = "active"
-routable = true
+status = "draft"
+routable = false
 pack = "reference-packs/domains/accessibility.toml"
 aliases = ["accessibility-analysis", "multimodal-accessibility"]
 index_note_id = "accessibility-index"

@@ -45,8 +45,9 @@ reference-packs/             repo fact packs (kind="repo") + domains/ knowledge 
 bundles/                     repository bundles mapping skills to reference packs
 examples/                    sample context envelopes
 docs/                        architecture, workflow, readiness, and command references
+schemas/                     RunManifest and ContextReceipt JSON Schemas
 tools/ · vendor/             tooling and the planned vendor subtree registry surface
-tests/                       pytest suite (63 tests)
+tests/                       pytest suite (66 tests)
 ```
 
 ## Installation & usage
@@ -89,6 +90,8 @@ python -m modeller.cli route --root . --envelope <env.json> --run-id <run>   # s
 python -m modeller.cli workflow --root . init   --run-id <run>
 python -m modeller.cli workflow --root . status --run-id <run>
 python -m modeller.cli workflow --root . check  --run-id <run>
+python -m modeller.cli workflow --root . manifest --run-id <run> [--envelope <env.json>]
+python -m modeller.cli workflow --root . close    --run-id <run> [--envelope <env.json>]
 
 # Strict-readiness remediation plan (no changes applied).
 python -m modeller.cli readiness --root . --json
@@ -98,12 +101,15 @@ Other surfaces: `skills`, `backends [--check <id>]`, `sync [<vendor>]`, `install
 [--apply] [--include-runtime-assets]`, `validate [--backend-json|--result-json]`, `run`, and the
 `workflow advance` / `complete-artifact` gates. See [docs/COMMANDS.md](docs/COMMANDS.md).
 
+The canonical CLI remains `python -m modeller.cli` / `modeller`. The legacy
+`python -m modeller_agents.cli` import path is only a compatibility alias.
+
 ### How the assets fit together
 
 `route` reads a **bundle** to pick reference packs and confirm the skill; the selected **reference
 packs** authorize the skill; **method** checklists and templates (for example the source-boundary
 checklist) drive the workflow. Installing with `--include-runtime-assets` copies `method/`,
-`reference-packs/`, `bundles/`, `backends.toml`, and `vendors.toml` into a target and records source
+`reference-packs/`, `bundles/`, `schemas/`, `backends.toml`, and `vendors.toml` into a target and records source
 provenance in `.modeller/install-manifest.json`; without it, only the plugin wiring is copied.
 
 ### Knowledge-pack validation and vault parity
@@ -123,6 +129,11 @@ blind. This is how the pack layer stays a live reference to the authority instea
   artifact gate passes; otherwise `route` returns `ok: false`. The `requirements` and
   `orchestration-design` steps require their artifacts' `## Evidence` to cite subagent/agent
   provenance. See [docs/workflows/DETERMINISTIC_WORKFLOW.md](docs/workflows/DETERMINISTIC_WORKFLOW.md).
+- **Run traceability surface.** `workflow manifest` emits a `RunManifest` referencing workflow state,
+  artifacts, gates, and optional `ContextReceipt` data by path and SHA-256 digest. `workflow close`
+  writes `.modeller/runs/<run_id>/run-manifest.json` and fails unless the workflow is complete, the
+  full artifact gate passes, the implementation evidence gate passes, and all workflow artifact
+  references include digests.
 - **Strict readiness (`doctor --strict`).** The release/CI gate promotes planned vendors, unpinned
   vendors, draft reference packs, and sibling-schema fallback to hard failures, and requires a real
   backend smoke through the contract seam. It emits stable `readiness_blockers[]` codes for CI.
@@ -149,8 +160,9 @@ blind. This is how the pack layer stays a live reference to the authority instea
 - **Accessibility knowledge-pack pilot — currently NOT routing (by design).**
   `reference-packs/domains/accessibility.toml` is the first `kind = "knowledge"` pilot pack. Because the
   vault deactivated domain routability (F-A), the domain is not active/routable in the current vault
-  export, so the pilot does **not** route today and `modeller.cli doctor` reports this and **exits 1 by
-  design**. The test suite asserts this deactivated state; the pack is structurally ready and will route
+  export, so the pilot does **not** route today. `modeller.cli doctor` reports the disabled axis as a
+  normal development warning; explicit routes for `intent.domains=["accessibility"]` fail with a
+  disabled-domain result and select zero knowledge packs. The pack is structurally ready and will route
   once the vault restores routability.
 
 ## Future features

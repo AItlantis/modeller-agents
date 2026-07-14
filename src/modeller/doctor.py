@@ -107,6 +107,8 @@ def _check_required_paths(root: Path, result: DoctorResult, *, installed_runtime
         ".claude/plugins/modeller/.claude-plugin/plugin.json",
         ".claude/plugins/modeller/.claude-plugin/marketplace.json",
         "backends.toml",
+        "schemas/context-receipt.schema.json",
+        "schemas/run-manifest.schema.json",
         "vendors.toml",
     ]
     if installed_runtime:
@@ -201,6 +203,7 @@ def _check_packaging(root: Path, result: DoctorResult) -> None:
         "method": "modeller/runtime/method",
         "reference-packs": "modeller/runtime/reference-packs",
         "bundles": "modeller/runtime/bundles",
+        "schemas": "modeller/runtime/schemas",
         "backends.toml": "modeller/runtime/backends.toml",
         "vendors.toml": "modeller/runtime/vendors.toml",
     }
@@ -337,7 +340,7 @@ def _check_knowledge_axis(root: Path, result: DoctorResult) -> None:
         return
     exports = load_vault_exports(root)
     result.warnings.extend(exports.warnings)
-    result.errors.extend(validate_domain_registry(root, exports=exports))
+    result.errors.extend(validate_domain_registry(root, exports=exports, warnings=result.warnings))
     for pack_file in sorted(domain_root.glob("*.toml")) if domain_root.exists() else []:
         if pack_file.name == "_registry.toml":
             continue

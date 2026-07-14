@@ -11,6 +11,7 @@ from .readiness import build_readiness_report
 from .run import run_backend_pipeline, validate_backend_json, validate_result_json
 from .route import route_envelope
 from .sync import list_vendors, plan_sync
+from .traceability import build_run_manifest, evaluate_close_gate, write_run_manifest
 from .workflow import advance_workflow, check_current_step, complete_artifact, format_status, init_workflow
 
 
@@ -96,6 +97,14 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_complete.add_argument("--output", required=True)
     workflow_complete.add_argument("--purpose", help="Artifact purpose. Defaults to a step-oriented sentence.")
     workflow_complete.add_argument("--verification", help="Verification evidence for the completed artifact.")
+    workflow_manifest = workflow_sub.add_parser("manifest", help="Emit a RunManifest for a workflow run.")
+    workflow_manifest.add_argument("--run-id", required=True)
+    workflow_manifest.add_argument("--envelope", help="Optional context envelope JSON to include as a ContextReceipt.")
+    workflow_manifest.add_argument("--output", help="Optional manifest output path. Prints to stdout when omitted.")
+    workflow_close = workflow_sub.add_parser("close", help="Check the deterministic close gate and write a RunManifest.")
+    workflow_close.add_argument("--run-id", required=True)
+    workflow_close.add_argument("--envelope", help="Optional context envelope JSON to include as a ContextReceipt.")
+    workflow_close.add_argument("--manifest-output", help="Manifest output path. Defaults to .modeller/runs/<run-id>/run-manifest.json.")
     return parser
 
 
@@ -200,6 +209,33 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(path)
             return 0
+        if args.workflow_command == "manifest":
+            manifest = build_run_manifest(
+                root=root,
+                run_id=args.run_id,
+                envelope_path=Path(args.envelope) if args.envelope else None,
+            )
+            if args.output:
+                path = write_run_manifest(
+                    root=root,
+                    run_id=args.run_id,
+                    envelope_path=Path(args.envelope) if args.envelope else None,
+                    output_path=Path(args.output),
+                )
+                print(path)
+            else:
+                print(json.dumps(manifest, indent=2))
+            return 0
+        if args.workflow_command == "close":
+            path = write_run_manifest(
+                root=root,
+                run_id=args.run_id,
+                envelope_path=Path(args.envelope) if args.envelope else None,
+                output_path=Path(args.manifest_output) if args.manifest_output else None,
+            )
+            gate = evaluate_close_gate(root, args.run_id)
+            print(json.dumps({"ok": gate["ok"], "manifest": str(path), "close_gate": gate}, indent=2))
+            return 0 if gate["ok"] else 1
     raise AssertionError(args.command)
 
 

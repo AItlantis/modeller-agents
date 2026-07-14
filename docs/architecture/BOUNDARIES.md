@@ -43,9 +43,9 @@ Status as of 2026-07-14: the axis and the `accessibility` pilot pack
 (`reference-packs/domains/accessibility.toml`) are implemented and test-covered, but the vault has
 **deactivated domain routability (F-A)** — `modelling-knowledge/registry/knowledge-domains.yml` marks
 `product`/`accessibility`/`transport` `draft`/`routable:false`. So the pilot pack is **rejected at
-route and `modeller.cli doctor` exits 1 by design** (asserted by `tests/test_reference_packs.py` and
-`tests/test_doctor_cli.py`). Re-activation is gated on this repo accepting the D3–D6 conditions at
-general scope (decision 0010, still `proposed`) and the vault-side DR-1 attribution cure.
+route**, while `modeller.cli doctor` reports the mirrored disabled state as a normal development
+warning. Re-activation is gated on this repo accepting the D3–D6 conditions at general scope
+(decision 0010, still `proposed`) and the vault-side DR-1 attribution cure.
 
 See `docs/architecture/typed-packs-knowledge-axis.md` (design), `docs/architecture/typed-packs-open-decisions.md`
 (D3–D6 rulings, pilot-scope), and `modelling-knowledge/decisions/0005-knowledge-vault-domain-scope.md`

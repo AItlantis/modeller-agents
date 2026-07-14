@@ -31,5 +31,6 @@ packages = ["src/modeller", "src/modeller_agents"]
 "method" = "modeller/runtime/method"
 "reference-packs" = "modeller/runtime/reference-packs"
 "bundles" = "modeller/runtime/bundles"
+"schemas" = "modeller/runtime/schemas"
 "backends.toml" = "modeller/runtime/backends.toml"
 "vendors.toml" = "modeller/runtime/vendors.toml"

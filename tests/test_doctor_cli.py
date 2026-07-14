@@ -31,19 +31,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DoctorCliTests(unittest.TestCase):
-    def test_doctor_reports_deactivated_domain_on_current_repo(self) -> None:
-        # F-A: domain routability deactivated (registry draft/routable:false);
-        # revert this expectation when routability is restored after 0010
-        # general-scope acceptance + DR-1 cure. This test used to assert the
-        # doctor ACCEPTS the repo (result.ok True). The doctor now correctly
-        # treats the deactivated accessibility pilot pack as a hard error, so
-        # result.ok is False and the specific deactivation error is reported.
-        # Skill/backend discovery is unaffected and still surfaces.
+    def test_doctor_warns_about_deactivated_domain_on_current_repo(self) -> None:
+        # F-A: domain routability is intentionally disabled in the vault and
+        # mirrored locally as draft/routable:false. Normal doctor should accept
+        # that development state while keeping the disabled axis visible.
         result = run_doctor(ROOT)
-        self.assertFalse(result.ok, result.format())
+
+        self.assertTrue(result.ok, result.format())
         self.assertTrue(
-            any("is not active/routable in vault export" in e for e in result.errors),
-            result.errors,
+            any("domain accessibility: disabled in vault export" in warning for warning in result.warnings),
+            result.warnings,
         )
         self.assertIn("workflow", result.skills)
         self.assertIn("aimsun-psp", result.backends)
@@ -138,47 +135,38 @@ class DoctorCliTests(unittest.TestCase):
         self.assertIn("strict readiness", output)
 
     def test_doctor_cli_json_is_machine_readable(self) -> None:
-        # F-A: domain routability deactivated (registry draft/routable:false);
-        # revert this expectation when routability is restored after 0010
-        # general-scope acceptance + DR-1 cure. The doctor now fails on the
-        # deactivated accessibility pilot pack, so the CLI exits 1 and the JSON
-        # payload has ok=False with the deactivation error. The test still
-        # verifies the output is valid, parseable JSON carrying the expected
-        # schema keys (this test's point) against the current F-A output.
+        # The disabled knowledge axis is a normal development warning, while
+        # this test still verifies the JSON payload shape.
         stdout = StringIO()
         with redirect_stdout(stdout):
             exit_code = main(["--root", str(ROOT), "doctor", "--json"])
-        self.assertEqual(exit_code, 1)
+        self.assertEqual(exit_code, 0)
         payload = json.loads(stdout.getvalue())
-        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["ok"])
         self.assertIn("workflow", payload["skills"])
         self.assertIn("warnings", payload)
         self.assertIn("errors", payload)
         self.assertTrue(
-            any("is not active/routable in vault export" in e for e in payload["errors"]),
-            payload["errors"],
+            any("domain accessibility: disabled in vault export" in warning for warning in payload["warnings"]),
+            payload["warnings"],
         )
 
     def test_modeller_agents_compat_cli_json_is_machine_readable(self) -> None:
-        # F-A: domain routability deactivated (registry draft/routable:false);
-        # revert this expectation when routability is restored after 0010
-        # general-scope acceptance + DR-1 cure. The compat CLI delegates to the
-        # same doctor, so under F-A it exits 1 with ok=False and the
-        # deactivation error. The test still verifies valid, parseable JSON with
-        # the expected schema keys (this test's point) against the F-A output.
+        # The compat CLI delegates to the same normal doctor; disabled domains
+        # remain warnings, not structural errors.
         from modeller_agents.cli import main as compat_main
 
         stdout = StringIO()
         with redirect_stdout(stdout):
             exit_code = compat_main(["--root", str(ROOT), "doctor", "--json"])
 
-        self.assertEqual(exit_code, 1)
+        self.assertEqual(exit_code, 0)
         payload = json.loads(stdout.getvalue())
-        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["ok"])
         self.assertIn("workflow", payload["skills"])
         self.assertTrue(
-            any("is not active/routable in vault export" in e for e in payload["errors"]),
-            payload["errors"],
+            any("domain accessibility: disabled in vault export" in warning for warning in payload["warnings"]),
+            payload["warnings"],
         )
 
     def test_doctor_cli_strict_json_returns_failure_payload(self) -> None:
@@ -344,7 +332,7 @@ class DoctorCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             result = install_plugin(ROOT, Path(tmp), dry_run=True, include_runtime_assets=True)
             self.assertTrue(result.dry_run)
-            self.assertEqual(len(result.actions), 10)
+            self.assertEqual(len(result.actions), 11)
             self.assertTrue(any("copy runtime directory" in action for action in result.actions), result.actions)
             self.assertTrue(any("copy runtime file" in action for action in result.actions), result.actions)
 
@@ -364,6 +352,7 @@ class DoctorCliTests(unittest.TestCase):
             self.assertTrue((target / "method/workflows/modeller-agents-build.workflow.json").exists())
             self.assertTrue((target / "reference-packs/testudo.toml").exists())
             self.assertTrue((target / "bundles/testudo.bundle.json").exists())
+            self.assertTrue((target / "schemas/run-manifest.schema.json").exists())
             self.assertTrue((target / "backends.toml").exists())
             self.assertTrue((target / "vendors.toml").exists())
             self.assertTrue((target / "sitecustomize.py").exists())
@@ -373,6 +362,7 @@ class DoctorCliTests(unittest.TestCase):
             self.assertTrue(manifest["include_runtime_assets"])
             self.assertEqual(manifest["python_path_bootstrap"], "sitecustomize.py")
             self.assertIn("method", manifest["copied_runtime_assets"])
+            self.assertIn("schemas", manifest["copied_runtime_assets"])
             self.assertIn("vendors.toml", manifest["copied_runtime_assets"])
             self.assertIn("available", manifest["source_git"])
             self.assertIn(
@@ -404,25 +394,19 @@ class DoctorCliTests(unittest.TestCase):
             mcp = json.loads(target_mcp.read_text(encoding="utf-8"))
             self.assertEqual(mcp, {"mcpServers": {}})
 
-    def test_doctor_reports_deactivated_domain_on_installed_runtime_target(self) -> None:
-        # F-A: domain routability deactivated (registry draft/routable:false);
-        # revert this expectation when routability is restored after 0010
-        # general-scope acceptance + DR-1 cure. This test used to assert the
-        # doctor ACCEPTS a freshly installed runtime target (result.ok True).
-        # The installed runtime carries the same deactivated accessibility pilot
-        # pack, so the doctor now correctly fails with the deactivation error.
-        # Runtime asset install still yields the workflow skill and aimsun-psp
-        # backend.
+    def test_doctor_warns_about_deactivated_domain_on_installed_runtime_target(self) -> None:
+        # Installed runtime assets carry the same mirrored disabled domain
+        # state, which should be visible as a warning but not fail doctor.
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             install_plugin(ROOT, target, dry_run=False, include_runtime_assets=True)
 
             result = run_doctor(target)
 
-            self.assertFalse(result.ok, result.format())
+            self.assertTrue(result.ok, result.format())
             self.assertTrue(
-                any("is not active/routable in vault export" in e for e in result.errors),
-                result.errors,
+                any("domain accessibility: disabled in vault export" in warning for warning in result.warnings),
+                result.warnings,
             )
             self.assertIn("workflow", result.skills)
             self.assertIn("aimsun-psp", result.backends)
@@ -445,6 +429,7 @@ class DoctorCliTests(unittest.TestCase):
             self.assertFalse(result.dry_run)
             self.assertTrue((target / ".claude/plugins/modeller").exists())
             self.assertTrue((target / "method").exists())
+            self.assertTrue((target / "schemas").exists())
             self.assertTrue((target / "vendors.toml").exists())
             self.assertTrue((target / "sitecustomize.py").exists())
             manifest = json.loads((target / MANIFEST_RELATIVE_PATH).read_text(encoding="utf-8"))
@@ -458,6 +443,8 @@ class DoctorCliTests(unittest.TestCase):
         self.assertEqual(decision.skill, "review")
         self.assertEqual(decision.bundle, "testudo")
         self.assertEqual(decision.routing_key_kind, "repository")
+        self.assertEqual(decision.knowledge_domains, [])
+        self.assertEqual(decision.knowledge_packs, [])
 
     def test_run_backend_pipeline_uses_runner_command_seam(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -643,6 +630,7 @@ def _write_minimal_packaging_root(root: Path, script: str = "modeller.cli:main")
     (root / "method").mkdir()
     (root / "reference-packs").mkdir()
     (root / "bundles").mkdir()
+    (root / "schemas").mkdir()
     (root / "src/modeller/__init__.py").write_text("", encoding="utf-8")
     (root / "src/modeller/cli.py").write_text("def main():\n    return 0\n", encoding="utf-8")
     (root / "src/modeller_agents/__init__.py").write_text("", encoding="utf-8")
@@ -650,6 +638,8 @@ def _write_minimal_packaging_root(root: Path, script: str = "modeller.cli:main")
     (root / ".claude/settings.json").write_text("{}", encoding="utf-8")
     (root / ".mcp.json.example").write_text("{}", encoding="utf-8")
     (root / "backends.toml").write_text('schema_version = "0.1"\n', encoding="utf-8")
+    (root / "schemas/context-receipt.schema.json").write_text("{}", encoding="utf-8")
+    (root / "schemas/run-manifest.schema.json").write_text("{}", encoding="utf-8")
     (root / "vendors.toml").write_text('schema_version = "0.1"\n', encoding="utf-8")
     (root / "README.md").write_text("# Demo\n", encoding="utf-8")
     (root / "LICENSE").write_text("Demo license\n", encoding="utf-8")
@@ -679,6 +669,7 @@ def _write_minimal_packaging_root(root: Path, script: str = "modeller.cli:main")
                 '"method" = "modeller/runtime/method"',
                 '"reference-packs" = "modeller/runtime/reference-packs"',
                 '"bundles" = "modeller/runtime/bundles"',
+                '"schemas" = "modeller/runtime/schemas"',
                 '"backends.toml" = "modeller/runtime/backends.toml"',
                 '"vendors.toml" = "modeller/runtime/vendors.toml"',
             ]
@@ -692,10 +683,13 @@ def _write_minimal_runtime_assets(root: Path) -> None:
     (root / "method").mkdir()
     (root / "reference-packs").mkdir()
     (root / "bundles").mkdir()
+    (root / "schemas").mkdir()
     (root / ".claude/plugins/modeller/README.md").write_text("# Plugin\n", encoding="utf-8")
     (root / ".claude/settings.json").write_text("{}", encoding="utf-8")
     (root / ".mcp.json.example").write_text("{}", encoding="utf-8")
     (root / "backends.toml").write_text('schema_version = "0.1"\n', encoding="utf-8")
+    (root / "schemas/context-receipt.schema.json").write_text('{"schema_version": 1}\n', encoding="utf-8")
+    (root / "schemas/run-manifest.schema.json").write_text('{"schema_version": 1}\n', encoding="utf-8")
     (root / "vendors.toml").write_text('schema_version = "0.1"\n', encoding="utf-8")
 
 

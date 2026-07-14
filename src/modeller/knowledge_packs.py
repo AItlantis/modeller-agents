@@ -126,7 +126,11 @@ def _installed_source_root(root: Path) -> Path | None:
     return path if path.exists() else None
 
 
-def validate_domain_registry(root: Path, exports: VaultExports | None = None) -> list[str]:
+def validate_domain_registry(
+    root: Path,
+    exports: VaultExports | None = None,
+    warnings: list[str] | None = None,
+) -> list[str]:
     errors: list[str] = []
     path = root / "reference-packs" / "domains" / "_registry.toml"
     if not path.exists():
@@ -169,7 +173,19 @@ def validate_domain_registry(root: Path, exports: VaultExports | None = None) ->
             if not vault_domain:
                 errors.append(f"domain {dom_id}: absent from vault export")
             elif vault_domain.get("status") != "active" or vault_domain.get("routable") is not True:
-                errors.append(f"domain {dom_id}: vault export is not active/routable")
+                local_disabled = (
+                    spec.get("status") == vault_domain.get("status")
+                    and spec.get("routable") is vault_domain.get("routable")
+                )
+                message = (
+                    f"domain {dom_id}: disabled in vault export "
+                    f"(status={vault_domain.get('status')!r}, routable={vault_domain.get('routable')!r})"
+                )
+                if local_disabled:
+                    if warnings is not None:
+                        warnings.append(message)
+                else:
+                    errors.append(f"domain {dom_id}: vault export is not active/routable")
     return errors
 
 
@@ -234,7 +250,12 @@ def resolve_knowledge_selection(
         resolution.errors.append(f"skill {skill!r} does not allow knowledge domains")
         return resolution
 
-    canonical, aliases, registry_errors = load_domain_pack_registry(root)
+    registry_specs, aliases, registry_errors = load_domain_registry_specs(root)
+    canonical = {
+        dom_id: spec["pack"]
+        for dom_id, spec in registry_specs.items()
+        if isinstance(spec.get("pack"), str)
+    }
     resolution.errors.extend(registry_errors)
     if registry_errors:
         return resolution
@@ -261,7 +282,27 @@ def resolve_knowledge_selection(
         return resolution
 
     exports = load_vault_exports(root)
+    vault_domains = {d.get("id"): d for d in exports.domains.get("domains", [])} if exports.domains else {}
     for item in canonical_domains:
+        disabled_reasons: list[str] = []
+        registry_spec = registry_specs.get(item["id"], {})
+        if registry_spec.get("status") not in (None, "active"):
+            disabled_reasons.append(f"registry status is {registry_spec.get('status')!r}")
+        if registry_spec.get("routable") is False:
+            disabled_reasons.append("registry routable is false")
+        vault_domain = vault_domains.get(item["id"])
+        if vault_domain and (
+            vault_domain.get("status") != "active" or vault_domain.get("routable") is not True
+        ):
+            disabled_reasons.append(
+                f"vault status is {vault_domain.get('status')!r}, routable is {vault_domain.get('routable')!r}"
+            )
+        if disabled_reasons:
+            resolution.errors.append(
+                f"knowledge domain {item['id']!r} is disabled; pack not loaded "
+                f"({'; '.join(disabled_reasons)})"
+            )
+            continue
         pack_path = canonical[item["id"]]
         check = validate_knowledge_pack(root, pack_path, exports=exports)
         resolution.errors.extend(check.errors)
@@ -416,6 +457,11 @@ def validate_knowledge_pack(root: Path, rel_path: str, exports: VaultExports | N
                 check.errors.append(f"{rel_path}: domain {check.domain!r} absent from current vault domain export")
             elif domain_spec.get("status") != "active" or domain_spec.get("routable") is not True:
                 check.errors.append(f"{rel_path}: domain {check.domain!r} is not active/routable in vault export")
+        elif domain_spec and (domain_spec.get("status") != "active" or domain_spec.get("routable") is not True):
+            check.warnings.append(
+                f"{rel_path}: domain {check.domain!r} is disabled in vault export "
+                f"(status={domain_spec.get('status')!r}, routable={domain_spec.get('routable')!r})"
+            )
         allowed_types = set(domain_spec.get("allowed_note_types", [])) if domain_spec else set()
         max_sens = data.get("max_sensitivity")
         for note in notes:
@@ -455,6 +501,16 @@ def validate_knowledge_pack(root: Path, rel_path: str, exports: VaultExports | N
 
 
 def load_domain_pack_registry(root: Path) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    registry_specs, aliases, errors = load_domain_registry_specs(root)
+    canonical = {
+        dom_id: spec["pack"]
+        for dom_id, spec in registry_specs.items()
+        if isinstance(spec.get("pack"), str)
+    }
+    return canonical, aliases, errors
+
+
+def load_domain_registry_specs(root: Path) -> tuple[dict[str, dict], dict[str, str], list[str]]:
     path = root / "reference-packs" / "domains" / "_registry.toml"
     try:
         registry = load_toml(path)
@@ -463,7 +519,7 @@ def load_domain_pack_registry(root: Path) -> tuple[dict[str, str], dict[str, str
     except Exception as exc:
         return {}, {}, [f"knowledge domain registry invalid TOML: {exc}"]
     domains = registry.get("domains", {})
-    canonical: dict[str, str] = {}
+    registry_specs: dict[str, dict] = {}
     aliases: dict[str, str] = {}
     errors: list[str] = []
     if not isinstance(domains, dict):
@@ -473,10 +529,10 @@ def load_domain_pack_registry(root: Path) -> tuple[dict[str, str], dict[str, str
             continue
         pack = spec.get("pack")
         if isinstance(pack, str):
-            canonical[dom_id] = pack
+            registry_specs[dom_id] = dict(spec)
         for alias in spec.get("aliases", []) if isinstance(spec.get("aliases"), list) else []:
             aliases[str(alias).lower()] = dom_id
-    return canonical, aliases, errors
+    return registry_specs, aliases, errors
 
 
 def load_skill_domain_affinity(root: Path, skill: str) -> dict:

@@ -258,26 +258,21 @@ class ReferencePackTests(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertTrue(any("superseded" in error for error in result.errors), result.errors)
 
-    def test_live_accessibility_pack_rejected_while_domain_deactivated(self) -> None:
-        # F-A: domain routability deactivated (registry draft/routable:false);
-        # revert this expectation when routability is restored after 0010
-        # general-scope acceptance + DR-1 cure. This test used to assert the
-        # live accessibility pack CONFORMS (result.ok / status "active"). With
-        # the vault domain export now marking accessibility not active/routable,
-        # the pack MUST fail validation with the deactivation error (and the
-        # digest mismatch that follows from the regenerated export).
+    def test_live_accessibility_pack_is_draft_warning_while_domain_deactivated(self) -> None:
+        # F-A: domain routability is intentionally disabled in the vault and
+        # mirrored locally as a draft pack. Pack validation should keep that
+        # state visible without treating it as structural corruption.
         result = validate_knowledge_pack(ROOT, "reference-packs/domains/accessibility.toml")
 
-        self.assertFalse(result.ok, result.errors)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(result.status, "draft")
         self.assertTrue(
-            any("is not active/routable in vault export" in e for e in result.errors),
-            result.errors,
+            any("knowledge pack is draft" in warning for warning in result.warnings),
+            result.warnings,
         )
-        # Digest was regenerated to match the deactivated registry, so the pack
-        # (pinned to the pre-deactivation export) also reports a digest mismatch.
         self.assertTrue(
-            any("source_domains_digest does not match current vault domain export" in e for e in result.errors),
-            result.errors,
+            any("domain 'accessibility' is disabled in vault export" in warning for warning in result.warnings),
+            result.warnings,
         )
 
     def test_shared_eligibility_conformance_fixture(self) -> None:
@@ -461,10 +456,10 @@ class ReferencePackTests(unittest.TestCase):
             # selected on either the domain or pack axis.
             self.assertEqual(decision.knowledge_domains, [])
             self.assertEqual(decision.knowledge_packs, [])
-            # The decision fails and carries the specific deactivation error.
+            # The decision fails and carries a clear disabled-domain error.
             self.assertFalse(decision.ok, decision.errors)
             self.assertTrue(
-                any("is not active/routable in vault export" in e for e in decision.errors),
+                any("knowledge domain 'accessibility' is disabled; pack not loaded" in e for e in decision.errors),
                 decision.errors,
             )
             # The non-knowledge (base/repo) route still resolves normally.

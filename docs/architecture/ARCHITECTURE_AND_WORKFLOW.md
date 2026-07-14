@@ -102,10 +102,10 @@ by id. It is additive — envelopes with no `domains[]` route exactly as the rep
 - Retrieval is **references and metadata only** — note ids, purpose, sensitivity. Note bodies are
   never loaded; the progressive Level 0–3 loading in the vault alignment plan is not implemented.
 - **Current state (F-A):** the vault has deactivated all scoped domains (`draft`/`routable:false`),
-  so a route requesting a domain fails and selects zero knowledge packs, and `doctor` exits 1 by
-  design. The `accessibility` pilot pack is inert until re-activation (decision 0010 accepted at
-  general scope + the vault DR-1 attribution cure). See `docs/architecture/BOUNDARIES.md` and
-  `docs/architecture/typed-packs-open-decisions.md`.
+  so a route requesting a domain fails and selects zero knowledge packs, while normal `doctor`
+  reports the mirrored disabled state as a warning. The `accessibility` pilot pack is inert until
+  re-activation (decision 0010 accepted at general scope + the vault DR-1 attribution cure). See
+  `docs/architecture/BOUNDARIES.md` and `docs/architecture/typed-packs-open-decisions.md`.
 
 ## 6. Deterministic Workflow
 
