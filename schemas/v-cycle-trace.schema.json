@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/v-cycle-trace.schema.json",
+  "title": "V-Cycle Trace",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "nodes",
+    "links"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_family": {
+      "const": "v-cycle"
+    },
+    "selected_stages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "stage",
+          "status",
+          "artifact_ref"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "need",
+              "requirement",
+              "design",
+              "implementation",
+              "test-case",
+              "test-result",
+              "acceptance-evidence",
+              "human-decision",
+              "risk",
+              "reservation"
+            ]
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "candidate",
+              "draft",
+              "approved",
+              "implemented",
+              "passed",
+              "failed",
+              "deferred",
+              "rejected",
+              "superseded"
+            ]
+          },
+          "artifact_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "human_review_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "relation"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1
+          },
+          "relation": {
+            "enum": [
+              "derived-from",
+              "specified-by",
+              "designed-by",
+              "implemented-by",
+              "verified-by",
+              "validated-by",
+              "accepted-by",
+              "supersedes",
+              "mitigates",
+              "reserves"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "subagent_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "receipt_id",
+          "work_order_id",
+          "stage_id",
+          "agent_id",
+          "exit_status",
+          "output_digest",
+          "receipt_ref",
+          "receipt_sha256",
+          "work_order_ref",
+          "work_order_sha256"
+        ],
+        "properties": {
+          "receipt_id": { "type": "string", "minLength": 1 },
+          "work_order_id": { "type": "string", "minLength": 1 },
+          "stage_id": { "type": "string", "minLength": 1 },
+          "agent_id": { "type": "string", "minLength": 1 },
+          "exit_status": { "type": "string", "enum": ["complete", "blocked", "failed"] },
+          "output_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+          "receipt_ref": { "type": "string", "minLength": 1 },
+          "receipt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "work_order_ref": { "type": "string", "minLength": 1 },
+          "work_order_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "subagent_ingestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "receipt_id",
+          "work_order_id",
+          "stage_id",
+          "agent_id",
+          "ingested_at",
+          "artifact_updates",
+          "human_review_complete"
+        ],
+        "properties": {
+          "receipt_id": { "type": "string", "minLength": 1 },
+          "work_order_id": { "type": "string", "minLength": 1 },
+          "stage_id": { "type": "string", "minLength": 1 },
+          "agent_id": { "type": "string", "minLength": 1 },
+          "ingested_at": { "type": "string", "minLength": 1 },
+          "human_review_complete": { "const": false },
+          "artifact_updates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "before_sha256", "after_sha256"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "before_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "after_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage_id",
+          "gap_type",
+          "status",
+          "description"
+        ],
+        "properties": {
+          "stage_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "gap_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "accepted",
+              "closed",
+              "deferred"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ai_usage": {
+      "type": "object",
+      "required": [
+        "used",
+        "human_review_complete"
+      ],
+      "properties": {
+        "used": {
+          "type": "boolean"
+        },
+        "human_review_complete": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

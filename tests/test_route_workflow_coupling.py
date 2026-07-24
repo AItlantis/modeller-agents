@@ -9,6 +9,7 @@ from pathlib import Path
 
 from modeller.cli import main
 from modeller.route import route_envelope
+from modeller.vcycle import init_v_cycle_run
 from modeller.workflow import _validate_artifact, check_current_step, complete_artifact, init_workflow
 
 
@@ -151,6 +152,75 @@ class RouteWorkflowCouplingTests(unittest.TestCase):
                 any("run_id" in error or "gate" in error for error in decision.errors),
                 decision.errors,
             )
+
+    def test_v_cycle_route_requires_run_id_and_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_v_cycle_route_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["v-cycle"])
+            envelope = _write_envelope(root, "v-cycle")
+
+            missing_run = route_envelope(root, envelope)
+
+            self.assertFalse(missing_run.ok)
+            self.assertTrue(any("run_id" in error for error in missing_run.errors), missing_run.errors)
+
+            init_v_cycle_run(root, "run-v-cycle", invocation_mode="stage", requested_stage="implementation")
+            gated = route_envelope(root, envelope, run_id="run-v-cycle")
+
+            self.assertFalse(gated.ok)
+            self.assertEqual(gated.run_id, "run-v-cycle")
+            self.assertTrue(any("workflow gate not satisfied" in error for error in gated.errors), gated.errors)
+
+    def test_v_cycle_route_blocks_stage_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_v_cycle_route_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["v-cycle"])
+            init_v_cycle_run(root, "run-v-cycle", invocation_mode="stage", requested_stage="implementation")
+            envelope = _write_envelope(
+                root,
+                "v-cycle",
+                run_id="run-v-cycle",
+                intent_extra={"workflow_family": "v-cycle", "v_cycle_stage": "unit-testing"},
+                policy_extra={"requires_workflow": True, "workflow_family": "v-cycle"},
+            )
+
+            decision = route_envelope(root, envelope)
+
+            self.assertFalse(decision.ok)
+            self.assertTrue(any("does not match requested stage" in error for error in decision.errors), decision.errors)
+
+    def test_v_cycle_bind_run_policy_accepts_initialized_run_before_exit_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_v_cycle_route_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["v-cycle"])
+            init_v_cycle_run(root, "run-v-cycle", invocation_mode="stage", requested_stage="implementation")
+            envelope = _write_envelope(
+                root,
+                "v-cycle",
+                run_id="run-v-cycle",
+                intent_extra={"workflow_family": "v-cycle", "v_cycle_stage": "implementation"},
+                policy_extra={
+                    "requires_workflow": True,
+                    "workflow_family": "v-cycle",
+                    "gate_policy": "bind-run",
+                },
+            )
+
+            decision = route_envelope(root, envelope)
+
+            self.assertTrue(decision.ok, decision.errors)
+            self.assertEqual(decision.run_id, "run-v-cycle")
+
+    def test_v_cycle_route_respects_explicit_no_workflow_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_v_cycle_route_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["v-cycle"])
+            envelope = _write_envelope(root, "v-cycle", policy_extra={"requires_workflow": False})
+
+            decision = route_envelope(root, envelope)
+
+            self.assertTrue(decision.ok, decision.errors)
+            self.assertIsNone(decision.run_id)
 
     def test_provenance_binding_rejects_evidence_without_marker(self) -> None:
         workflow = json.loads(
@@ -325,6 +395,26 @@ def _copy_minimal_workflow_root(tmp: Path) -> Path:
     return root
 
 
+def _copy_minimal_v_cycle_route_root(tmp: Path) -> Path:
+    root = _copy_minimal_workflow_root(tmp)
+    for rel in [
+        "method/policies",
+        "schemas",
+        ".claude/plugins/modeller/skills/v-cycle",
+    ]:
+        (root / rel).mkdir(parents=True, exist_ok=True)
+    for rel in [
+        "method/workflows/v-cycle.family.yaml",
+        "method/workflows/v-cycle.stages.yaml",
+        "method/policies/v-cycle-vigilance.yaml",
+        "schemas/v-cycle-trace.schema.json",
+        "schemas/human-review-receipt.schema.json",
+        ".claude/plugins/modeller/skills/v-cycle/SKILL.md",
+    ]:
+        (root / rel).write_text((ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    return root
+
+
 def _write_bundle_and_pack(root: Path, skills: list[str]) -> None:
     (root / "bundles").mkdir(parents=True, exist_ok=True)
     (root / "reference-packs").mkdir(parents=True, exist_ok=True)
@@ -355,15 +445,26 @@ def _write_bundle_and_pack(root: Path, skills: list[str]) -> None:
     )
 
 
-def _write_envelope(root: Path, requested_capability: str, run_id: str | None = None) -> Path:
+def _write_envelope(
+    root: Path,
+    requested_capability: str,
+    run_id: str | None = None,
+    intent_extra: dict | None = None,
+    policy_extra: dict | None = None,
+) -> Path:
     envelope = root / "envelope.json"
     execution_policy: dict = {"consent_required": True, "max_risk_level": "low"}
     if run_id is not None:
         execution_policy["run_id"] = run_id
+    if policy_extra:
+        execution_policy.update(policy_extra)
+    intent = {"target_repository": "demo", "requested_capability": requested_capability}
+    if intent_extra:
+        intent.update(intent_extra)
     envelope.write_text(
         json.dumps(
             {
-                "intent": {"target_repository": "demo", "requested_capability": requested_capability},
+                "intent": intent,
                 "execution_policy": execution_policy,
             }
         ),

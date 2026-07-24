@@ -12,7 +12,7 @@ license = { file = "LICENSE" }
 authors = [
   { name = "AItlantis" }
 ]
-dependencies = []
+dependencies = ["PyYAML>=6.0"]
 
 [project.scripts]
 modeller = "modeller.cli:main"

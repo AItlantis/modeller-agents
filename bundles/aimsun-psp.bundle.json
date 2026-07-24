@@ -6,6 +6,7 @@
     "workflow",
     "orchestrate",
     "source-boundary-check",
+    "v-cycle",
     "backend-contract-check",
     "antagonist-review",
     "review",

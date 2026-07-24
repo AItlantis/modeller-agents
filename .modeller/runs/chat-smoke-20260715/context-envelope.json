@@ -1,0 +1,35 @@
+{
+  "intent": {
+    "user_text": "Create a brief.md and recon.md about aimsun-psp rendering_geh pipeline",
+    "target_repository": "aimsun-psp",
+    "requested_capability": "v-cycle",
+    "run_id": "chat-smoke-20260715",
+    "workflow_family": "v-cycle",
+    "v_cycle_stage": "project-governance",
+    "mutation_scope": "workflow-artifacts",
+    "classification": {
+      "primary_intent": "brief-and-recon",
+      "requested_capability": "v-cycle",
+      "workflow_family": "v-cycle",
+      "v_cycle_stage": "project-governance",
+      "target_path": null,
+      "requires_workflow": true,
+      "mutation_scope": "workflow-artifacts",
+      "risk_level": "medium",
+      "confidence": "high",
+      "reasons": [
+        "matched phrase 'brief.md'",
+        "matched phrase 'recon.md'"
+      ],
+      "errors": []
+    }
+  },
+  "execution_policy": {
+    "consent_required": true,
+    "max_risk_level": "medium",
+    "requires_workflow": true,
+    "run_id": "chat-smoke-20260715",
+    "workflow_family": "v-cycle",
+    "gate_policy": "bind-run"
+  }
+}

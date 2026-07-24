@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/human-review-receipt.schema.json",
+  "title": "Human Review Receipt",
+  "type": "object",
+  "required": [
+    "review_id",
+    "run_id",
+    "stage_id",
+    "artifact_refs",
+    "artifact_digest",
+    "review_type",
+    "reviewer",
+    "decision",
+    "reviewed_at"
+  ],
+  "properties": {
+    "review_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stage_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "artifact_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "review_type": {
+      "enum": [
+        "expert-review",
+        "approval",
+        "sign-off",
+        "action-approval"
+      ]
+    },
+    "reviewer": {
+      "type": "object",
+      "required": [
+        "id",
+        "role",
+        "actor_type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor_type": {
+          "const": "human"
+        }
+      },
+      "additionalProperties": false
+    },
+    "decision": {
+      "enum": [
+        "approved",
+        "approved-with-reservations",
+        "changes-requested",
+        "rejected"
+      ]
+    },
+    "reservations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "accepted_risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reviewed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

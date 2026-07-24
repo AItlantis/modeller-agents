@@ -1,0 +1,30 @@
+schema_version: 1
+workflow_family: v-cycle
+name: Project V-Cycle
+status: draft
+owner: modeller-agents
+skill: v-cycle
+invocation_modes:
+- full
+- stage
+- paired-review
+stage_catalog: method/workflows/v-cycle.stages.yaml
+vigilance_policy: method/policies/v-cycle-vigilance.yaml
+states:
+- intake
+- recon
+- draft
+- machine-check
+- awaiting-human-review
+- approved
+- rework
+- rejected
+- closed
+- blocked
+rules:
+  ai_may_approve: false
+  stage_only_supported: true
+  paired_review_supported: true
+  missing_prerequisite_behavior: block-or-request-confirmed-assumption
+  material_change_invalidates_review: true
+  estimated_benefits_are_advisory: true

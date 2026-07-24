@@ -1,0 +1,42 @@
+{
+  "schema_version": "0.1",
+  "workflow_family": "v-cycle",
+  "run_id": "chat-smoke-20260715",
+  "invocation_mode": "stage",
+  "requested_stage": "project-governance",
+  "selected_stages": [
+    "project-governance"
+  ],
+  "current_stage_index": 0,
+  "status": "running",
+  "created_at": "2026-07-15T08:45:50Z",
+  "updated_at": "2026-07-15T08:45:50Z",
+  "artifact_root": ".modeller/runs/chat-smoke-20260715/artifacts",
+  "stages": [
+    {
+      "id": "project-governance",
+      "status": "draft",
+      "branch": "transversal",
+      "vigilance_level": "V3",
+      "human_owner_roles": [
+        "project-lead",
+        "pmo"
+      ],
+      "artifacts": [
+        "planning-baseline",
+        "status-report",
+        "risk-register",
+        "decision-log",
+        "document-configuration-log"
+      ],
+      "dependencies": [],
+      "paired_stage": null,
+      "review": {
+        "status": "missing",
+        "receipt_path": "",
+        "artifact_digest": ""
+      },
+      "prerequisites": []
+    }
+  ]
+}

@@ -1,0 +1,191 @@
+schema_version: 1
+workflow_family: v-cycle
+stages:
+- id: opportunity-analysis
+  branch: descending
+  order: 10
+  human_owner_roles:
+  - project-lead
+  - sponsor
+  vigilance_level: V3
+  artifacts:
+  - opportunity-note
+  - assumption-register
+  - benefit-measurement-plan
+  paired_stage: operations-rex
+  dependencies: []
+- id: needs-analysis
+  branch: descending
+  order: 20
+  human_owner_roles:
+  - business-owner
+  - project-lead
+  vigilance_level: V3
+  artifacts:
+  - needs-baseline
+  - stakeholder-source-log
+  - contradiction-register
+  paired_stage: acceptance-qualification
+  dependencies:
+  - opportunity-analysis
+- id: functional-specification
+  branch: descending
+  order: 30
+  human_owner_roles:
+  - business-analyst
+  - product-owner
+  vigilance_level: V3
+  artifacts:
+  - functional-specification
+  - requirement-register
+  - traceability-matrix
+  paired_stage: system-validation
+  dependencies:
+  - needs-analysis
+- id: general-design
+  branch: descending
+  order: 40
+  human_owner_roles:
+  - architect
+  - technical-lead
+  vigilance_level: V3
+  artifacts:
+  - architecture-options
+  - architecture-decision
+  - interface-contracts
+  - technical-risk-register
+  paired_stage: integration-testing
+  dependencies:
+  - functional-specification
+- id: detailed-design
+  branch: descending
+  order: 50
+  human_owner_roles:
+  - technical-lead
+  - domain-expert
+  vigilance_level: V2
+  artifacts:
+  - detailed-design-package
+  - design-models
+  - unit-test-plan
+  - integration-test-plan
+  paired_stage: unit-testing
+  dependencies:
+  - general-design
+- id: implementation
+  branch: point
+  order: 60
+  human_owner_roles:
+  - developer
+  - peer-reviewer
+  vigilance_level: V2
+  artifacts:
+  - implementation-record
+  - code-review-receipt
+  - technical-documentation
+  paired_stage: null
+  dependencies:
+  - detailed-design
+- id: unit-testing
+  branch: ascending
+  order: 70
+  human_owner_roles:
+  - developer
+  - test-lead
+  vigilance_level: V2
+  artifacts:
+  - unit-test-cases
+  - unit-test-results
+  - coverage-and-relevance-review
+  paired_stage: detailed-design
+  dependencies:
+  - implementation
+- id: integration-testing
+  branch: ascending
+  order: 80
+  human_owner_roles:
+  - integration-lead
+  - test-lead
+  vigilance_level: V2
+  artifacts:
+  - integration-scenarios
+  - integration-results
+  - anomaly-register
+  paired_stage: general-design
+  dependencies:
+  - unit-testing
+- id: system-validation
+  branch: ascending
+  order: 90
+  human_owner_roles:
+  - quality-lead
+  - project-lead
+  vigilance_level: V3
+  artifacts:
+  - validation-plan
+  - requirement-test-matrix
+  - validation-report
+  - go-no-go-recommendation
+  paired_stage: functional-specification
+  dependencies:
+  - integration-testing
+- id: acceptance-qualification
+  branch: ascending
+  order: 100
+  human_owner_roles:
+  - business-owner
+  - acceptance-signatory
+  vigilance_level: V4
+  artifacts:
+  - acceptance-plan
+  - acceptance-results
+  - reservation-register
+  - acceptance-receipt
+  paired_stage: needs-analysis
+  dependencies:
+  - system-validation
+- id: deployment
+  branch: post-cycle
+  order: 110
+  human_owner_roles:
+  - operations-owner
+  - release-approver
+  vigilance_level: V4
+  artifacts:
+  - deployment-plan
+  - rehearsal-evidence
+  - rollback-plan
+  - deployment-receipt
+  paired_stage: null
+  dependencies:
+  - acceptance-qualification
+- id: operations-rex
+  branch: post-cycle
+  order: 120
+  human_owner_roles:
+  - operations-owner
+  - project-lead
+  vigilance_level: V3
+  artifacts:
+  - operations-report
+  - incident-trend-report
+  - project-rex
+  - benefit-measurement-result
+  paired_stage: opportunity-analysis
+  dependencies:
+  - deployment
+- id: project-governance
+  branch: transversal
+  order: 0
+  human_owner_roles:
+  - project-lead
+  - pmo
+  vigilance_level: V3
+  artifacts:
+  - planning-baseline
+  - status-report
+  - risk-register
+  - decision-log
+  - document-configuration-log
+  paired_stage: null
+  dependencies: []

@@ -51,7 +51,7 @@
     },
     "subagents": {
       "type": "array",
-      "items": { "type": "object" }
+      "items": { "$ref": "#/$defs/subagent_summary" }
     },
     "outputs": {
       "type": "array",
@@ -95,6 +95,34 @@
         "path": { "type": "string", "minLength": 1 },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "size_bytes": { "type": "integer" }
+      }
+    },
+    "subagent_summary": {
+      "type": "object",
+      "required": [
+        "receipt_id",
+        "work_order_id",
+        "agent_id",
+        "run_id",
+        "stage_id",
+        "exit_status",
+        "output_digest",
+        "receipt_ref",
+        "work_order_ref"
+      ],
+      "properties": {
+        "receipt_id": { "type": "string", "minLength": 1 },
+        "work_order_id": { "type": "string", "minLength": 1 },
+        "agent_id": { "type": "string", "minLength": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "stage_id": { "type": "string", "minLength": 1 },
+        "exit_status": { "type": "string", "enum": ["complete", "blocked", "failed"] },
+        "output_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "artifact_refs": { "type": "array", "items": { "type": "string" } },
+        "tests_run": { "type": "array" },
+        "files_changed": { "type": "array", "items": { "type": "string" } },
+        "receipt_ref": { "$ref": "#/$defs/artifact_ref" },
+        "work_order_ref": { "$ref": "#/$defs/artifact_ref" }
       }
     }
   }

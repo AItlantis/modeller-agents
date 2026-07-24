@@ -1,0 +1,6 @@
+{
+  "status": "missing-human-review",
+  "run_id": "chat-smoke-20260715",
+  "stage_id": "project-governance",
+  "message": "Replace this file through `modeller workflow review --receipt <receipt.json>`."
+}

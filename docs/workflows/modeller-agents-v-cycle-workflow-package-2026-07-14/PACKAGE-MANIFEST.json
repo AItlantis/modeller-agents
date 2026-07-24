@@ -1,0 +1,57 @@
+[
+  {
+    "path": "README.md",
+    "bytes": 1187,
+    "sha256": "87a1695b1d097afe9e70aad87e64530815661045ac78355453488c8ef6f232fc"
+  },
+  {
+    "path": "docs/IMPLEMENTATION_PLAN.md",
+    "bytes": 2483,
+    "sha256": "0953f7c3c82278e3d4cfb334f13a1d9c1412bd48e55c4c956ce58609f76053ed"
+  },
+  {
+    "path": "docs/V_CYCLE_SPECIFICATION.md",
+    "bytes": 5626,
+    "sha256": "a792f79eca4993b9892b50ceef1b64565df25185051d45df50a21fee483dccdf"
+  },
+  {
+    "path": "docs/V_CYCLE_VIGILANCE.md",
+    "bytes": 2676,
+    "sha256": "63adea0d21bede67fe88ab01c45cd212b46e5d2beb868302ef83e121afda80f2"
+  },
+  {
+    "path": "examples/stage-request.yaml",
+    "bytes": 439,
+    "sha256": "a6cc91910dac18fe390b34a041d7403345f07b9d41f8b781429773a06c4ad882"
+  },
+  {
+    "path": "method/policies/v-cycle-vigilance.yaml",
+    "bytes": 1108,
+    "sha256": "6d3a315b16ab7e989dbf2cc33c29997fa405afdbf1a8566b8663eb1f84dc1047"
+  },
+  {
+    "path": "method/workflows/v-cycle.family.yaml",
+    "bytes": 644,
+    "sha256": "293ea236f179732d110a27f72f49dc8e665d86be4f21cbe7f29b5d58233a19df"
+  },
+  {
+    "path": "method/workflows/v-cycle.stages.yaml",
+    "bytes": 3936,
+    "sha256": "13cf90a4f0069229c8089b70c68ed52fa5701122ea2439b076c79d609a96d930"
+  },
+  {
+    "path": "schemas/human-review-receipt.schema.json",
+    "bytes": 1890,
+    "sha256": "3ab17bbfd1f636489c632df5d18abce4e1d0351981e414eb77438714cdecda6c"
+  },
+  {
+    "path": "schemas/v-cycle-trace.schema.json",
+    "bytes": 2703,
+    "sha256": "9d8df914888f53277f9eca35ddae8c7d89fceb5b32dbca411df868f41f01b432"
+  },
+  {
+    "path": "skill/SKILL.md",
+    "bytes": 1586,
+    "sha256": "73571448b6d718c63cf9736fd4fac9293d47bcc1851c84aa12f50493f8564cee"
+  }
+]

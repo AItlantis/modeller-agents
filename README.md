@@ -45,9 +45,9 @@ reference-packs/             repo fact packs (kind="repo") + domains/ knowledge 
 bundles/                     repository bundles mapping skills to reference packs
 examples/                    sample context envelopes
 docs/                        architecture, workflow, readiness, and command references
-schemas/                     RunManifest and ContextReceipt JSON Schemas
+schemas/                     RunManifest, ContextReceipt, human-review, and subagent JSON Schemas
 tools/ · vendor/             tooling and the planned vendor subtree registry surface
-tests/                       pytest suite (83 tests)
+tests/                       pytest suite
 ```
 
 ## Installation & usage
@@ -87,20 +87,46 @@ python -m modeller.cli doctor --root . --strict        # CI/release gate (see Fe
 python -m modeller.cli route --root . --envelope examples/testudo-context-envelope.json
 python -m modeller.cli route --root . --envelope <env.json> --run-id <run>   # supply workflow run
 
+# Natural-language orchestration front door.
+python -m modeller.cli orchestrate --root . --prompt "Create a brief.md and recon.md about aimsun-psp rendering_geh pipeline" --run-id <run> --json
+python -m modeller.cli orchestrate --root . --prompt "Create a functional specification for aimsun-psp rendering_geh pipeline" --run-id <run> --mode paired-review --json
+python -m modeller.cli orchestrate --root . --prompt "Create a brief.md and recon.md about aimsun-psp rendering_geh pipeline" --run-id <run> --chat-output .modeller\runs\<run>\chat-handoff.md
+python -m modeller.cli orchestrate --root . --prompt "Create a brief.md and recon.md about aimsun-psp rendering_geh pipeline" --run-id <run> --launch-chat codex
+
 # Deterministic artifact-gated workflow.
 python -m modeller.cli workflow --root . init   --run-id <run>
 python -m modeller.cli workflow --root . status --run-id <run>
 python -m modeller.cli workflow --root . check  --run-id <run>
 python -m modeller.cli workflow --root . manifest --run-id <run> [--envelope <env.json>]
 python -m modeller.cli workflow --root . close    --run-id <run> [--envelope <env.json>]
+python -m modeller.cli workflow --root . work-order --run-id <run> --target-repository <repo> --task "<task>" --agent-id <agent> --output <work-order.json>
+python -m modeller.cli workflow --root . lane-receipt --work-order <work-order.json> --receipt <lane-receipt.json>
+python -m modeller.cli workflow --root . ingest-lane-receipt --run-id <run> --receipt-id <receipt> --artifact <artifact-id>
+
+# V-cycle workflow family.
+python -m modeller.cli workflows --root . list --json
+python -m modeller.cli workflow --root . recommend --prompt "prepare deployment rollback"
+python -m modeller.cli workflow --root . init --run-id <run> --family v-cycle --mode stage --stage functional-specification
+python -m modeller.cli workflow --root . trace-check --run-id <run>
+python -m modeller.cli workflow --root . review --run-id <run> --receipt <human-review.json>
+python -m modeller.cli workflow --root . request-review --run-id <run> --provider receipt-file --receipt <human-review.json>
 
 # Strict-readiness remediation plan (no changes applied).
 python -m modeller.cli readiness --root . --json
 ```
 
 Other surfaces: `skills`, `backends [--check <id>]`, `sync [<vendor>]`, `install <target>
-[--apply] [--include-runtime-assets]`, `validate [--backend-json|--result-json]`, `plan`, `run`,
+[--apply] [--include-runtime-assets]`, `validate [--backend-json|--result-json]`, `plan`, `orchestrate`, `run`,
 and the `workflow advance` / `complete-artifact` gates. See [docs/COMMANDS.md](docs/COMMANDS.md).
+
+`plan` and `orchestrate` can be launched from a parent workspace when `--target-repository` names a
+child installed target. The CLI keeps the supplied root if it already has the bundle; otherwise it
+searches bounded child paths such as `aimsun\aimsun-psp` and fails with diagnostics if the match is
+missing or ambiguous.
+
+An installed runtime can also route a read-only task for a different sibling repository. In that
+case the handoff records both the runtime host (`allowed_runtime_root`) and the discovered target
+checkout (`source_root`), and `--launch-chat` starts the chat from `source_root`.
 
 The canonical CLI remains `python -m modeller.cli` / `modeller`. The legacy
 `python -m modeller_agents.cli` import path is only a compatibility alias.
@@ -132,10 +158,14 @@ blind. This is how the pack layer stays a live reference to the authority instea
   `orchestration-design` steps require their artifacts' `## Evidence` to cite subagent/agent
   provenance. See [docs/workflows/DETERMINISTIC_WORKFLOW.md](docs/workflows/DETERMINISTIC_WORKFLOW.md).
 - **Run traceability surface.** `workflow manifest` emits a `RunManifest` referencing workflow state,
-  artifacts, gates, and optional `ContextReceipt` data by path and SHA-256 digest. `workflow close`
-  writes `.modeller/runs/<run_id>/run-manifest.json` and fails unless the workflow is complete, the
-  full artifact gate passes, the implementation evidence gate passes, and all workflow artifact
-  references include digests.
+  artifacts, gates, optional `ContextReceipt` data, and persisted subagent lane receipts by path and
+  SHA-256 digest. `workflow close` writes `.modeller/runs/<run_id>/run-manifest.json` and fails unless
+  the workflow is complete, the full artifact gate passes, the implementation evidence gate passes,
+  and all workflow artifact references include digests.
+- **V-cycle workflow family.** The installed `v-cycle` skill and YAML runtime assets support
+  `full`, `stage`, and `paired-review` modes, stage prerequisites, paired verification links,
+  `v-trace.json`, human-review receipt validation, and digest invalidation. AI can draft and check
+  artifacts, but only a receipt with `reviewer.actor_type: human` can satisfy a human gate.
 - **Strict readiness (`doctor --strict`).** The release/CI gate promotes planned vendors, unpinned
   vendors, draft reference packs, and sibling-schema fallback to hard failures, and requires a real
   backend smoke through the contract seam. It emits stable `readiness_blockers[]` codes for CI.

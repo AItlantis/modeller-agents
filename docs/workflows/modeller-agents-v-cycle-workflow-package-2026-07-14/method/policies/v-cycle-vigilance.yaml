@@ -1,0 +1,41 @@
+schema_version: 1
+policy_id: v-cycle-vigilance
+status: draft
+levels:
+  V0:
+    description: Low-risk assistance
+    human_gate: review-before-external-use
+  V1:
+    description: Analytical support
+    human_gate: expert-validation
+  V2:
+    description: Generative engineering
+    human_gate: qualified-review-mandatory
+  V3:
+    description: Decision-sensitive
+    human_gate: named-approver-mandatory
+  V4:
+    description: External or contractual effect
+    human_gate: explicit-signatory-or-action-approval
+human_only_decisions:
+- business-need-baseline
+- scope-prioritization
+- architecture-selection
+- risk-criticality
+- code-acceptance
+- regression-scope-reduction
+- go-no-go
+- acceptance
+- reservation-closure
+- deployment-cutover
+- rollback
+- critical-incident-disposition
+- contractual-publication
+global_rules:
+  ai_can_issue_human_review_receipt: false
+  approved_tool_required: true
+  ai_usage_disclosure_required: true
+  source_grounding_required: true
+  material_change_invalidates_review: true
+  critical_incident_requires_human_escalation: true
+  benefit_estimates_are_not_commitments: true

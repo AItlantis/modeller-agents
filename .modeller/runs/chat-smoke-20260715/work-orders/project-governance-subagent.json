@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "work_order_id": "wo-685786984d94927b",
+  "created_at": "2026-07-15T08:47:15Z",
+  "agent_id": "subagent",
+  "task": "Create a brief.md and recon.md about aimsun-psp rendering_geh pipeline",
+  "run_id": "chat-smoke-20260715",
+  "workflow_family": "v-cycle",
+  "stage_id": "project-governance",
+  "target_repository": "aimsun-psp",
+  "target_path": "",
+  "allowed_paths": [
+    ".modeller/runs/chat-smoke-20260715/artifacts"
+  ],
+  "forbidden_actions": [
+    "workflow advance",
+    "workflow review",
+    "git commit",
+    "git push",
+    "git reset"
+  ],
+  "required_artifacts": [
+    "planning-baseline",
+    "status-report",
+    "risk-register",
+    "decision-log",
+    "document-configuration-log",
+    "brief",
+    "recon"
+  ],
+  "required_tests": [],
+  "gate_commands": [
+    [
+      "python",
+      "-m",
+      "modeller.cli",
+      "workflow",
+      "check",
+      "--run-id",
+      "chat-smoke-20260715"
+    ]
+  ],
+  "expected_result_schema": "schemas/subagent-lane-receipt.schema.json"
+}

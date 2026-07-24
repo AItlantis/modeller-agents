@@ -16,6 +16,8 @@ CAPABILITY_SKILLS = {
     "orchestrate": "orchestrate",
     "review": "review",
     "source-boundary-check": "source-boundary-check",
+    "v-cycle": "v-cycle",
+    "v_cycle": "v-cycle",
     "workflow": "workflow",
 }
 

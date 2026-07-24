@@ -11,6 +11,7 @@ from io import StringIO
 from pathlib import Path
 
 from modeller.cli import main
+from modeller.subagents import build_subagent_work_order, persist_subagent_lane_receipt
 from modeller.traceability import (
     build_run_manifest,
     evaluate_close_gate,
@@ -259,6 +260,79 @@ class TraceabilityTests(unittest.TestCase):
             self.assertEqual(len(manifest["context_receipts"]), 1)
             self.assertTrue(all(ref.get("sha256") for ref in manifest["artifacts"]), manifest["artifacts"])
 
+    def test_run_manifest_includes_persisted_subagent_receipts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            init_workflow(root, "run-subagent-manifest")
+            _complete_full_workflow(root, "run-subagent-manifest")
+            work_order = build_subagent_work_order(
+                root,
+                run_id="run-subagent-manifest",
+                target_repository="demo",
+                task="Prepare implementation evidence.",
+                agent_id="agent-impl",
+            )
+            receipt = _subagent_receipt(work_order)
+            record = persist_subagent_lane_receipt(root, work_order, receipt)
+            self.assertTrue(record["ok"], record)
+
+            manifest = build_run_manifest(root, "run-subagent-manifest")
+            manifest_check = validate_run_manifest(manifest)
+
+            self.assertTrue(manifest_check.ok, manifest_check.errors)
+            self.assertEqual(len(manifest["subagents"]), 1)
+            subagent = manifest["subagents"][0]
+            self.assertEqual(subagent["receipt_id"], receipt["receipt_id"])
+            self.assertEqual(subagent["work_order_id"], work_order["work_order_id"])
+            self.assertTrue(subagent["receipt_ref"].get("sha256"), subagent)
+            self.assertTrue(subagent["work_order_ref"].get("sha256"), subagent)
+
+    def test_manifest_id_changes_when_persisted_work_order_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            init_workflow(root, "run-subagent-id")
+            _complete_full_workflow(root, "run-subagent-id")
+            work_order = build_subagent_work_order(
+                root,
+                run_id="run-subagent-id",
+                target_repository="demo",
+                task="Prepare implementation evidence.",
+                agent_id="agent-impl",
+            )
+            record = persist_subagent_lane_receipt(root, work_order, _subagent_receipt(work_order))
+            self.assertTrue(record["ok"], record)
+            before = build_run_manifest(root, "run-subagent-id")
+            stored_work_order = root / record["stored_work_order"]
+            stored = json.loads(stored_work_order.read_text(encoding="utf-8"))
+            stored["task"] = "Changed task text after persistence."
+            stored_work_order.write_text(json.dumps(stored, indent=2) + "\n", encoding="utf-8")
+
+            after = build_run_manifest(root, "run-subagent-id")
+
+            self.assertNotEqual(after["manifest_id"], before["manifest_id"])
+
+    def test_run_manifest_rejects_malformed_subagent_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            init_workflow(root, "run-bad-subagent-manifest")
+            _complete_full_workflow(root, "run-bad-subagent-manifest")
+            work_order = build_subagent_work_order(
+                root,
+                run_id="run-bad-subagent-manifest",
+                target_repository="demo",
+                task="Prepare implementation evidence.",
+                agent_id="agent-impl",
+            )
+            record = persist_subagent_lane_receipt(root, work_order, _subagent_receipt(work_order))
+            self.assertTrue(record["ok"], record)
+            manifest = build_run_manifest(root, "run-bad-subagent-manifest")
+            del manifest["subagents"][0]["work_order_ref"]["sha256"]
+
+            manifest_check = validate_run_manifest(manifest)
+
+            self.assertFalse(manifest_check.ok)
+            self.assertTrue(any("work_order_ref.sha256" in error for error in manifest_check.errors), manifest_check.errors)
+
 
 def _copy_minimal_workflow_root(tmp: Path) -> Path:
     root = tmp / "repo"
@@ -344,6 +418,27 @@ def _mark_context_receipt_expected(root: Path, run_id: str) -> None:
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["context_receipt_expected"] = True
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
+def _subagent_receipt(work_order: dict) -> dict:
+    return {
+        "schema_version": 1,
+        "receipt_id": f"lane-{work_order['run_id']}",
+        "work_order_id": work_order["work_order_id"],
+        "agent_id": work_order["agent_id"],
+        "run_id": work_order["run_id"],
+        "stage_id": work_order["stage_id"],
+        "files_read": ["method/workflows/modeller-agents-build.workflow.json"],
+        "files_changed": [f".modeller/runs/{work_order['run_id']}/artifacts/IMPLEMENTATION.md"],
+        "commands_run": [["python", "-m", "pytest", "tests/test_traceability.py"]],
+        "tests_run": [{"command": "python -m pytest tests/test_traceability.py", "status": "passed"}],
+        "exit_status": "complete",
+        "artifact_refs": [f".modeller/runs/{work_order['run_id']}/artifacts/IMPLEMENTATION.md"],
+        "output_digest": "sha256:" + "1" * 64,
+        "risks": [],
+        "no_git_assertion": True,
+        "attempted_workflow_advance": False,
+    }
 
 
 def _complete_full_workflow(root: Path, run_id: str, *, final_parity: bool = True) -> None:

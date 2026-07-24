@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "run_id": "chat-smoke-20260715",
+  "workflow_family": "v-cycle",
+  "selected_stages": [
+    "project-governance"
+  ],
+  "nodes": [],
+  "links": [],
+  "subagent_receipts": [],
+  "gaps": [],
+  "ai_usage": {
+    "used": true,
+    "human_review_complete": false
+  }
+}

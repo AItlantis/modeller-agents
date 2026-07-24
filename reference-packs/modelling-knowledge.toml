@@ -6,6 +6,7 @@ owner = "modelling-knowledge"
 central_skills = [
   "orchestrate",
   "source-boundary-check",
+  "v-cycle",
   "antagonist-review",
   "review"
 ]

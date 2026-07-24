@@ -75,7 +75,7 @@ The installer copies local plugin wiring only by default. The central runtime re
 - `method/` workflow definitions, templates, tasks, and checklists;
 - `reference-packs/` repository facts consumed by central skills;
 - `bundles/` mappings from target repositories to skills and reference packs;
-- `schemas/` RunManifest and ContextReceipt JSON Schemas;
+- `schemas/` RunManifest, ContextReceipt, human-review, V-cycle trace, and subagent JSON Schemas;
 - `backends.toml`, `vendors.toml`, and contract validation support.
 
 `--include-runtime-assets` copies `method/`, `reference-packs/`, `bundles/`, `schemas/`, `backends.toml`, and `vendors.toml` under `.modeller/runtime/` in the target. It is a snapshot copy for local orchestration. It does not sync vendors, activate draft packs, or prove backend runtime readiness.
@@ -110,13 +110,20 @@ Bundles must also declare `routingKeyKind` as either `repository` or `repository
 
 ### Route requires a workflow for orchestration
 
-When the resolved skill is `orchestrate`, or the envelope sets `execution_policy.requires_workflow: true`, routing additionally requires an active deterministic workflow run. Supply the run either as `execution_policy.run_id` (or `intent.run_id`) in the envelope, or with the `--run-id` CLI flag (the flag takes precedence over the envelope value). The route returns `ok: false` with an explanatory error when:
+When the resolved skill is `orchestrate`, `v-cycle`, or the envelope sets `execution_policy.requires_workflow: true`, routing additionally requires an active workflow run unless the policy explicitly disables workflow binding. Supply the run either as `execution_policy.run_id` (or `intent.run_id`) in the envelope, or with the `--run-id` CLI flag (the flag takes precedence over the envelope value).
+
+`execution_policy.gate_policy` controls what route proves:
+
+- `bind-run` validates that the run exists and that the requested V-cycle stage matches the current run stage. It does not require generated artifacts or human review to be complete. Use this at the start of orchestrated work, before subagents have produced evidence.
+- `check-current-gate` validates the current workflow exit gate. It fails while placeholders, missing evidence, failed checks, or missing human-review receipts remain. Use this before advancing or closing work.
+
+The route returns `ok: false` with an explanatory error when:
 
 - no `run_id` is supplied for an orchestration route;
 - the named run is not initialized;
-- the run's current artifact gate does not pass (from `check_current_step`).
+- the run's current artifact gate does not pass and `gate_policy` is `check-current-gate`.
 
-`RouteDecision` now includes a `run_id` field so callers can see which workflow run gated the route. Non-orchestration routes that do not set `requires_workflow` are unchanged and need no `run_id`.
+`RouteDecision` includes a `run_id` field so callers can see which workflow run gated the route. Non-orchestration routes that do not set `requires_workflow` are unchanged and need no `run_id`.
 
 ## Plan
 
@@ -134,7 +141,84 @@ Drafts a deterministic prompt-to-approved-execution scaffold without running the
 - `ToolPlan`: suggested verification/route commands, approval steps, and blockers;
 - `capability_manifest`: local bundles, skills, backends, workflows, and capability aliases discovered from the repository.
 
-`--target-repository` and `--requested-capability` can be supplied explicitly, or inferred when the prompt mentions exactly one known bundle id and exactly one known capability. `--envelope-output` writes the drafted context envelope so the next `route` command does not require hand-written JSON. The command is scaffold-only: it never executes a backend, workflow advance, or target-repository edit.
+`--target-repository` and `--requested-capability` can be supplied explicitly, or inferred when the prompt mentions exactly one known bundle id and exactly one known capability. Natural wording for common intents such as documentation lookup, brief/recon creation, code edits, test repair, validation, and deployment is classified before envelope creation. `--envelope-output` writes the drafted context envelope so the next `route` command does not require hand-written JSON. The command is scaffold-only: it never executes a backend, workflow advance, or target-repository edit.
+
+For V-cycle natural-language work, `plan` writes `execution_policy.gate_policy: bind-run` by default. That allows the orchestrator to initialize a run, bind to the selected stage, report status, and ask the human before subagents start work. Use `--gate-policy check-current-gate` when you want the route to require the current stage exit gate to pass.
+
+When `plan` or `orchestrate` is run from a parent workspace with `--target-repository <repo>`, the CLI
+first checks the supplied root for that bundle. If absent, it searches only `<root>\<repo>` and
+`<root>\*\<repo>` for an installed modeller runtime containing `.modeller/install-manifest.json` and
+`.modeller/runtime/bundles/<repo>.bundle.json`. A single match becomes the command root; zero or
+multiple matches fail closed with the inspected root, searched bundle path, child patterns, matching
+candidates, and rerun advice.
+
+Typical orchestrator loop:
+
+```powershell
+python -m modeller.cli --root . orchestrate --prompt "Create a brief.md and recon.md about rendering_geh pipeline" --target-repository aimsun-psp --run-id rendering-geh-brief-recon-20260715 --json
+python -m modeller.cli --root . orchestrate --prompt "Create a functional specification for aimsun-psp rendering_geh pipeline" --target-repository aimsun-psp --run-id functional-spec-review-20260715 --mode paired-review --json
+python -m modeller.cli --root . orchestrate --prompt "Create a brief.md and recon.md about rendering_geh pipeline" --target-repository aimsun-psp --run-id rendering-geh-brief-recon-20260715 --chat-output .modeller\runs\rendering-geh-brief-recon-20260715\chat-handoff.md
+python -m modeller.cli --root . orchestrate --prompt "Create a brief.md and recon.md about rendering_geh pipeline" --target-repository aimsun-psp --run-id rendering-geh-brief-recon-20260715 --launch-chat codex
+python -m modeller.cli --root . orchestrate --prompt "Create a brief.md and recon.md about rendering_geh pipeline" --target-repository aimsun-psp --run-id rendering-geh-brief-recon-20260715 --launch-chat claude
+```
+
+The `orchestrate` command is the deterministic front door for a chat orchestrator. With `--json` it
+prints setup/status for automation; it does not start a Codex or Claude chat. With `--chat-output` it
+writes a markdown handoff prompt containing the envelope path, work-order path, current run status,
+gate blockers, and required human-approval loop. With `--launch-chat codex` or `--launch-chat claude`
+it writes that handoff and starts the selected chat client with an initial prompt telling it to read
+the handoff and continue as `modeller:orchestrator`.
+
+The runtime host does not have to be the target source repository. For example, a command launched
+from an installed `aimsun-psp` checkout can target `modelling-knowledge`; the planner uses the
+installed `.modeller/runtime/` bundle for routing and records the discovered sibling source root in
+the handoff. The chat process starts from that `source_root` when `--launch-chat` is used.
+
+The deterministic setup
+classifies the natural prompt, initializes or reuses a V-cycle run when required, writes
+`.modeller/runs/<run-id>/context-envelope.json`, routes with `bind-run`, reports the current gate, and
+writes a stage-bound subagent work order under `.modeller/runs/<run-id>/work-orders/`. It exits `0`
+when setup succeeds even if the current V-cycle gate still fails because artifacts contain
+placeholders or no human review receipt exists yet; that failure is the expected pause before
+subagent evidence and human approval. It does not apply human review, advance the workflow, edit target
+source files, or invent a subagent lane receipt.
+
+`--mode paired-review` initializes the requested V-cycle stage plus its paired verification stage when
+the classified stage has one. Stage advancement remains gated: if `orchestrate` created a work order,
+`workflow check` requires a matching complete lane receipt before `workflow advance` can pass. Human
+review receipts are rejected when the reviewer id matches a subagent/work-order agent for that stage.
+Closed stages are rechecked before later stages advance so material artifact changes cannot silently
+stale an earlier human review.
+
+The equivalent manual sequence remains:
+
+```powershell
+python -m modeller.cli --root . plan --prompt "Create a brief.md and recon.md about rendering_geh pipeline" --target-repository aimsun-psp --envelope-output .modeller\runs\rendering-geh-envelope.json
+python -m modeller.cli --root . workflow init --run-id rendering-geh-brief-recon-20260715 --family v-cycle --mode stage --stage project-governance
+python -m modeller.cli --root . plan --prompt "Create a brief.md and recon.md about rendering_geh pipeline" --target-repository aimsun-psp --run-id rendering-geh-brief-recon-20260715 --envelope-output .modeller\runs\rendering-geh-envelope.json
+python -m modeller.cli --root . route --envelope .modeller\runs\rendering-geh-envelope.json
+python -m modeller.cli --root . workflow status --run-id rendering-geh-brief-recon-20260715
+python -m modeller.cli --root . workflow work-order --run-id rendering-geh-brief-recon-20260715 --target-repository aimsun-psp --target-path domains/_41_MacroscopicResult/pipelines/rendering_geh --task "Create brief and recon evidence." --agent-id recon-agent --output .modeller\runs\rendering-geh-brief-recon-20260715\work-order.json
+python -m modeller.cli --root . workflow lane-receipt --work-order .modeller\runs\rendering-geh-brief-recon-20260715\work-order.json --receipt .modeller\runs\rendering-geh-brief-recon-20260715\lane-receipt.json
+python -m modeller.cli --root . workflow ingest-lane-receipt --run-id rendering-geh-brief-recon-20260715 --receipt-id lane-test --artifact recon --artifact planning-baseline
+```
+
+`workflow work-order` writes a stage-bound subagent contract. It records the active run, current
+stage, target repository, optional target path, allowed paths, forbidden actions, required artifacts,
+required tests, and the gate command the orchestrator will run later. It does not spawn the subagent
+by itself.
+
+`workflow lane-receipt` validates a returned subagent receipt against its work order. It rejects
+mismatched run/stage ids, changed files outside `allowed_paths`, missing `no_git_assertion`, attempted
+workflow advancement, and forbidden git/workflow commands. A valid lane receipt and its work order are
+stored under `.modeller/runs/<run-id>/subagents/<stage-id>/` and become digest-referenced evidence in
+`workflow manifest`; the command never advances workflow state by itself.
+
+`workflow ingest-lane-receipt` ingests a persisted lane receipt into named active V-cycle artifacts.
+It accepts artifact ids only, not paths. Artifact ids are standard V-cycle artifacts such as `brief`,
+`recon`, `workflow-plan`, `machine-evidence`, and `handoff`, plus current-stage artifact ids such as
+`planning-baseline`. Ingestion mutates markdown artifacts and updates trace metadata; it does not
+apply human review, advance stages, or make `ai_usage.human_review_complete` true.
 
 ## Run
 
@@ -194,9 +278,53 @@ Recommended operator loop:
 
 Do not treat a subagent "complete" message as a gate result or as standalone evidence. The gate result is the combination of completed current-step artifacts, a passing `check`, and a successful `advance`.
 
+### V-Cycle Workflow Family
+
+The V-cycle family is YAML-backed (`method/workflows/v-cycle.family.yaml`,
+`method/workflows/v-cycle.stages.yaml`) and uses `method/policies/v-cycle-vigilance.yaml`.
+It is exposed through the `v-cycle` skill and copied into target repositories by
+`install --include-runtime-assets`.
+
+```powershell
+python -m modeller.cli workflows --root AItlantis\modeller-agents list --json
+python -m modeller.cli workflow --root AItlantis\modeller-agents recommend --prompt "review system validation against requirements"
+python -m modeller.cli workflow --root AItlantis\modeller-agents init --run-id v-001 --family v-cycle --mode stage --stage functional-specification
+python -m modeller.cli workflow --root AItlantis\modeller-agents init --run-id v-pair-001 --family v-cycle --mode paired-review --stage functional-specification
+python -m modeller.cli workflow --root AItlantis\modeller-agents trace-check --run-id v-001
+python -m modeller.cli workflow --root AItlantis\modeller-agents check --run-id v-001
+python -m modeller.cli workflow --root AItlantis\modeller-agents review --run-id v-001 --receipt human-review.json
+python -m modeller.cli workflow --root AItlantis\modeller-agents request-review --run-id v-001 --provider receipt-file --receipt human-review.json
+python -m modeller.cli workflow --root AItlantis\modeller-agents advance --run-id v-001
+```
+
+`workflow init --family v-cycle` writes `.modeller/runs/<run-id>/state.json`, common
+artifacts (`BRIEF.md`, `RECON.md`, `workflow-plan.md`, `machine-evidence.md`,
+`handoff.md`), `v-trace.json`, and only the selected stage artifacts for `stage`
+mode. `paired-review` selects the requested stage and its configured paired stage.
+
+`workflow check` blocks while generated markdown still contains placeholders, while
+the current stage lacks a human-review receipt, or when a receipt digest no longer
+matches the current stage artifacts. Missing prerequisites are surfaced in warnings
+so the operator can obtain a baseline or record a confirmed assumption; the runtime
+does not invent missing upstream artifacts.
+
+`workflow review` accepts only receipts whose `reviewer.actor_type` is `human`, whose
+role matches one of the stage `human_owner_roles`, and whose `artifact_digest` equals
+the current stage digest. Receipt schema lives in
+`schemas/human-review-receipt.schema.json`; trace schema lives in
+`schemas/v-cycle-trace.schema.json`.
+
+`workflow request-review` wraps the same gate with a provider. `--provider receipt-file
+--receipt <human-review.json>` applies a user-supplied receipt without normalizing it.
+`--provider test-fixture` generates and applies a deterministic test receipt only when
+`--allow-test-fixture` is present and `--fixture-metadata` points under
+`.modeller/runs/<run-id>/` to JSON with matching `run_id`, `stage_id`,
+`provider: "test-fixture"`, and `fixture_run: true`. `test-fixture` is for E2E tests
+only. It is not a production approval path.
+
 ### RunManifest, ContextReceipt, and Close
 
-`workflow manifest` emits a machine-readable RunManifest for an initialized run. The manifest references the workflow definition, workflow state, and every workflow artifact by id, repository-relative path, SHA-256 digest, and size. It does not copy artifact bodies. Pass `--envelope` to add a ContextReceipt for the route context; the receipt records the retrieval query, selected bundle, reference packs, knowledge packs, budget, permissions, and hashed context files.
+`workflow manifest` emits a machine-readable RunManifest for an initialized run. The manifest references the workflow definition, workflow state, every workflow artifact, and any persisted subagent lane receipts by id, repository-relative path, SHA-256 digest, and size. It does not copy artifact bodies. Pass `--envelope` to add a ContextReceipt for the route context; the receipt records the retrieval query, selected bundle, reference packs, knowledge packs, budget, permissions, and hashed context files.
 
 `workflow close` writes `.modeller/runs/<run-id>/run-manifest.json` unless `--manifest-output` is supplied, then prints the close gate status. Close fails unless:
 
@@ -205,4 +333,4 @@ Do not treat a subagent "complete" message as a gate result or as standalone evi
 - the implementation artifact passes its returned-edits evidence gate, including `changed files`, `commands run`, and `unresolved gaps`;
 - workflow definition, state, and artifact references all carry SHA-256 digests.
 
-Schemas live in `schemas/run-manifest.schema.json` and `schemas/context-receipt.schema.json`. The canonical command remains `python -m modeller.cli` / `modeller`; `python -m modeller_agents.cli` is compatibility only.
+Schemas live under `schemas/`, including `run-manifest.schema.json`, `context-receipt.schema.json`, `human-review-receipt.schema.json`, `subagent-work-order.schema.json`, and `subagent-lane-receipt.schema.json`. The canonical command remains `python -m modeller.cli` / `modeller`; `python -m modeller_agents.cli` is compatibility only.

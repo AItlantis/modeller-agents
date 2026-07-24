@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/subagent-lane-receipt.schema.json",
+  "title": "Subagent Lane Receipt",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "work_order_id",
+    "agent_id",
+    "run_id",
+    "stage_id",
+    "files_read",
+    "files_changed",
+    "commands_run",
+    "tests_run",
+    "exit_status",
+    "artifact_refs",
+    "output_digest",
+    "risks",
+    "no_git_assertion",
+    "attempted_workflow_advance"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "receipt_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "work_order_id": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "stage_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "files_read": { "type": "array", "items": { "type": "string" } },
+    "files_changed": { "type": "array", "items": { "type": "string" } },
+    "commands_run": { "type": "array" },
+    "tests_run": { "type": "array" },
+    "exit_status": { "type": "string", "enum": ["complete", "blocked", "failed"] },
+    "artifact_refs": { "type": "array", "items": { "type": "string" } },
+    "output_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "no_git_assertion": { "const": true },
+    "attempted_workflow_advance": { "const": false }
+  }
+}

@@ -17,4 +17,5 @@ The executable plugin surface is under `.claude/plugins/modeller/skills/`. This 
 - `pipeline-smoke`
 - `review`
 - `source-boundary-check`
+- `v-cycle`
 - `workflow`

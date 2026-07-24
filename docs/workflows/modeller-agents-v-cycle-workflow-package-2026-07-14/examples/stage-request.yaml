@@ -1,0 +1,15 @@
+workflow_family: v-cycle
+invocation_mode: stage
+requested_stage: functional-specification
+user_outcome: Review and improve the functional requirements before architecture work
+  starts.
+expected_artifacts:
+- functional-specification
+- requirement-register
+- traceability-matrix
+- human-review-package
+execution_policy:
+  read_only_recon: true
+  writes_require_approval: true
+  human_review_required: true
+  external_actions_allowed: false

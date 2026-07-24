@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/v-cycle-trace.schema.json",
+  "title": "V-Cycle Trace",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "nodes",
+    "links"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_family": {
+      "const": "v-cycle"
+    },
+    "selected_stages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "stage",
+          "status",
+          "artifact_ref"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "need",
+              "requirement",
+              "design",
+              "implementation",
+              "test-case",
+              "test-result",
+              "acceptance-evidence",
+              "human-decision",
+              "risk",
+              "reservation"
+            ]
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "candidate",
+              "draft",
+              "approved",
+              "implemented",
+              "passed",
+              "failed",
+              "deferred",
+              "rejected",
+              "superseded"
+            ]
+          },
+          "artifact_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "human_review_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "relation"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1
+          },
+          "relation": {
+            "enum": [
+              "derived-from",
+              "specified-by",
+              "designed-by",
+              "implemented-by",
+              "verified-by",
+              "validated-by",
+              "accepted-by",
+              "supersedes",
+              "mitigates",
+              "reserves"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage_id",
+          "gap_type",
+          "status",
+          "description"
+        ],
+        "properties": {
+          "stage_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "gap_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "accepted",
+              "closed",
+              "deferred"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ai_usage": {
+      "type": "object",
+      "required": [
+        "used",
+        "human_review_complete"
+      ],
+      "properties": {
+        "used": {
+          "type": "boolean"
+        },
+        "human_review_complete": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

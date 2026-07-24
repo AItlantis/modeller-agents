@@ -242,6 +242,11 @@ See `AItlantis/docs/ORCHESTRATION.md` §4 + §6.4 for the full run-flow and back
   in `backends.toml`, **not** vendored. Supersedes the earlier "vendor/aimsun-psp subtree" plan.
 
 **Still open:**
+- **O0 - Natural-language orchestrator front door.** `plan` routes correctly when capability is
+  explicit, but natural wording such as "create a brief and recon", "find docs", or "edit code"
+  still falls back to generic `workflow`. The improvement plan for semantic intent detection,
+  installed-root diagnostics, chat-orchestrator gate activation, subagent lane receipts, and
+  human-review E2E fixtures lives in `docs/architecture/intent-orchestrator-improvement-plan.md`.
 - **O1 — aimsun-psp remote/home.** No `aimsun-psp` dir exists under `AItlantis/` yet; the concrete
   pipeline reference currently lives in Testudo (`vwe.pipeline.yml`, `actions/`, `pipeline/`).
   Confirm the authoritative remote before **registering** it in `backends.toml` (A3b). No longer

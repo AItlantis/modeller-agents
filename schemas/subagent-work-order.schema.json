@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/subagent-work-order.schema.json",
+  "title": "Subagent Work Order",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "work_order_id",
+    "run_id",
+    "workflow_family",
+    "stage_id",
+    "target_repository",
+    "allowed_paths",
+    "forbidden_actions",
+    "required_artifacts",
+    "required_tests",
+    "gate_commands",
+    "expected_result_schema"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "work_order_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "agent_id": { "type": "string", "minLength": 1 },
+    "task": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "workflow_family": { "type": "string", "enum": ["v-cycle", "modeller-agents-build"] },
+    "stage_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "target_repository": { "type": "string", "minLength": 1 },
+    "target_path": {
+      "type": "string",
+      "pattern": "^(|(?!(?:/|[A-Za-z]:))(?!.*(?:^|/)\\.\\.(?:/|$)).+)$"
+    },
+    "allowed_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$)).+"
+      }
+    },
+    "forbidden_actions": { "type": "array", "items": { "type": "string" } },
+    "required_artifacts": { "type": "array", "items": { "type": "string" } },
+    "required_tests": { "type": "array", "items": { "type": "string" } },
+    "gate_commands": { "type": "array", "items": { "type": "array", "items": { "type": "string" } } },
+    "expected_result_schema": { "type": "string", "const": "schemas/subagent-lane-receipt.schema.json" }
+  }
+}

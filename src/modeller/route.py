@@ -8,6 +8,7 @@ from .capabilities import CAPABILITY_SKILLS, canonical_skill_for_capability
 from .knowledge_packs import resolve_knowledge_selection
 from .reference_packs import validate_reference_pack
 from .runtime import runtime_path
+from .vcycle import check_v_cycle_current_stage, load_v_cycle_state
 from .workflow import check_current_step
 
 
@@ -120,16 +121,35 @@ def route_payload(root: Path, envelope: dict, run_id: str | None = None) -> Rout
         decision.errors.append("medium/high risk envelopes must require consent")
 
     run_id = run_id or policy.get("run_id") or intent.get("run_id")
-    requires_workflow = bool(policy.get("requires_workflow", skill == "orchestrate"))
+    workflow_family = str(policy.get("workflow_family") or intent.get("workflow_family") or "")
+    gate_policy = str(policy.get("gate_policy") or "check-current-gate")
+    if gate_policy not in {"bind-run", "check-current-gate"}:
+        decision.errors.append(f"unknown execution_policy.gate_policy {gate_policy!r}")
+        return decision
+    requires_workflow = (
+        bool(policy["requires_workflow"])
+        if "requires_workflow" in policy
+        else skill in {"orchestrate", "v-cycle"} or workflow_family == "v-cycle"
+    )
+    requested_stage = str(intent.get("v_cycle_stage") or policy.get("v_cycle_stage") or "")
     if requires_workflow:
         if not run_id:
             decision.errors.append(
-                "orchestration requires execution_policy.run_id naming an active deterministic workflow run"
+                "orchestration requires execution_policy.run_id naming an active workflow run"
             )
         else:
             run_id = str(run_id)
             try:
-                gate = check_current_step(root, run_id)
+                if workflow_family == "v-cycle" or skill == "v-cycle":
+                    _validate_v_cycle_stage(root, run_id, requested_stage, decision)
+                if gate_policy == "bind-run":
+                    decision.run_id = run_id
+                    return decision
+                gate = (
+                    check_v_cycle_current_stage(root, run_id)
+                    if workflow_family == "v-cycle" or skill == "v-cycle"
+                    else check_current_step(root, run_id)
+                )
             except Exception:
                 decision.errors.append(
                     f"workflow run {run_id!r} not found or not initialized; "
@@ -139,6 +159,24 @@ def route_payload(root: Path, envelope: dict, run_id: str | None = None) -> Rout
                 decision.run_id = run_id
                 if not gate.ok:
                     decision.errors.append(
-                        f"deterministic workflow gate not satisfied for run {run_id!r}: {gate.errors}"
+                        f"workflow gate not satisfied for run {run_id!r}: {gate.errors}"
                     )
     return decision
+
+
+def _validate_v_cycle_stage(root: Path, run_id: str, requested_stage: str, decision: RouteDecision) -> None:
+    if not requested_stage:
+        return
+    state = load_v_cycle_state(root, run_id)
+    current_index = int(state.get("current_stage_index", 0))
+    stages = state.get("stages", [])
+    if not isinstance(stages, list) or current_index >= len(stages):
+        decision.errors.append(f"workflow run {run_id!r} has no current V-cycle stage")
+        return
+    current = stages[current_index]
+    current_stage = str(current.get("id", ""))
+    if requested_stage != current_stage:
+        decision.errors.append(
+            f"workflow run {run_id!r} current V-cycle stage {current_stage!r} "
+            f"does not match requested stage {requested_stage!r}"
+        )

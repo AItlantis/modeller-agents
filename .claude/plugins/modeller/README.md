@@ -13,6 +13,7 @@ It intentionally does not include repository-local agents from Testudo, Aimsun P
 - `workflow`
 - `orchestrate`
 - `source-boundary-check`
+- `v-cycle`
 - `antagonist-review`
 - `review`
 - `memory-recon`

@@ -107,6 +107,8 @@ def _check_required_paths(root: Path, result: DoctorResult, *, installed_runtime
         "backends.toml",
         "schemas/context-receipt.schema.json",
         "schemas/run-manifest.schema.json",
+        "schemas/subagent-lane-receipt.schema.json",
+        "schemas/subagent-work-order.schema.json",
         "vendors.toml",
     ]
     if installed_runtime:
@@ -542,6 +544,7 @@ def _check_workflows(root: Path, result: DoctorResult) -> None:
         workflow = _load_json(workflow_file, result)
         if workflow:
             _check_workflow_definition(workflow_file, workflow, result)
+    _check_v_cycle_assets(root, result)
     if not template_path.exists():
         result.errors.append("missing workflow artifact template: method/templates/workflow-artifact.md")
         return
@@ -608,6 +611,73 @@ def _check_workflow_definition(workflow_file: Path, workflow: dict, result: Doct
             terms = requirements.get(artifact, {}).get("required_terms")
             if not isinstance(terms, list) or not terms or not all(isinstance(term, str) and term for term in terms):
                 result.errors.append(f"{rel}: artifact {artifact!r} must declare non-empty required_terms")
+
+
+def _check_v_cycle_assets(root: Path, result: DoctorResult) -> None:
+    family_path = runtime_path(root, "method", "workflows", "v-cycle.family.yaml")
+    stages_path = runtime_path(root, "method", "workflows", "v-cycle.stages.yaml")
+    policy_path = runtime_path(root, "method", "policies", "v-cycle-vigilance.yaml")
+    trace_schema = runtime_path(root, "schemas", "v-cycle-trace.schema.json")
+    receipt_schema = runtime_path(root, "schemas", "human-review-receipt.schema.json")
+    lane_receipt_schema = runtime_path(root, "schemas", "subagent-lane-receipt.schema.json")
+    work_order_schema = runtime_path(root, "schemas", "subagent-work-order.schema.json")
+    skill_path = root / ".claude/plugins/modeller/skills/v-cycle/SKILL.md"
+    if "v-cycle" in result.skills and not skill_path.exists():
+        result.errors.append("v-cycle skill is discovered but missing SKILL.md")
+    for path, label in [
+        (family_path, "v-cycle family"),
+        (stages_path, "v-cycle stages"),
+        (policy_path, "v-cycle vigilance policy"),
+        (trace_schema, "v-cycle trace schema"),
+        (receipt_schema, "human-review receipt schema"),
+        (lane_receipt_schema, "subagent lane receipt schema"),
+        (work_order_schema, "subagent work order schema"),
+    ]:
+        if not path.exists():
+            result.errors.append(f"missing {label}: {runtime_relative_path(root, path)}")
+    if not family_path.exists() or not stages_path.exists() or not policy_path.exists():
+        return
+    family = _load_yaml(family_path, result)
+    stages_payload = _load_yaml(stages_path, result)
+    policy = _load_yaml(policy_path, result)
+    if not family or not stages_payload or not policy:
+        return
+    if family.get("workflow_family") != "v-cycle":
+        result.errors.append("v-cycle.family.yaml workflow_family must be 'v-cycle'")
+    if family.get("skill") != "v-cycle":
+        result.errors.append("v-cycle.family.yaml skill must be 'v-cycle'")
+    modes = family.get("invocation_modes")
+    if not isinstance(modes, list) or set(modes) != {"full", "stage", "paired-review"}:
+        result.errors.append("v-cycle.family.yaml invocation_modes must be full, stage, and paired-review")
+    rules = family.get("rules")
+    if not isinstance(rules, dict) or rules.get("ai_may_approve") is not False:
+        result.errors.append("v-cycle.family.yaml rules.ai_may_approve must be false")
+    stages = stages_payload.get("stages")
+    if not isinstance(stages, list) or not stages:
+        result.errors.append("v-cycle.stages.yaml must declare a non-empty stages list")
+        return
+    stage_ids = {stage.get("id") for stage in stages if isinstance(stage, dict)}
+    for stage in stages:
+        if not isinstance(stage, dict):
+            result.errors.append("v-cycle.stages.yaml stages entries must be objects")
+            continue
+        stage_id = stage.get("id")
+        prefix = f"v-cycle.stages.yaml stage {stage_id!r}"
+        for key in ["id", "branch", "vigilance_level"]:
+            if not isinstance(stage.get(key), str) or not stage.get(key):
+                result.errors.append(f"{prefix}: {key} must be a non-empty string")
+        for key in ["artifacts", "dependencies", "human_owner_roles"]:
+            if not isinstance(stage.get(key), list):
+                result.errors.append(f"{prefix}: {key} must be an array")
+        paired = stage.get("paired_stage")
+        if paired is not None and paired not in stage_ids:
+            result.errors.append(f"{prefix}: paired_stage {paired!r} is not declared")
+        for dependency in stage.get("dependencies", []):
+            if dependency not in stage_ids:
+                result.errors.append(f"{prefix}: dependency {dependency!r} is not declared")
+    global_rules = policy.get("global_rules")
+    if not isinstance(global_rules, dict) or global_rules.get("ai_can_issue_human_review_receipt") is not False:
+        result.errors.append("v-cycle-vigilance.yaml must block AI-issued human review receipts")
 
 
 def _check_backends(root: Path, result: DoctorResult, *, strict: bool) -> None:
@@ -731,6 +801,23 @@ def _load_toml(path: Path, result: DoctorResult) -> dict:
     except Exception as exc:
         result.errors.append(f"invalid toml {path.relative_to(result.root)}: {exc}")
     return {}
+
+
+def _load_yaml(path: Path, result: DoctorResult) -> dict:
+    try:
+        import yaml  # type: ignore
+
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        result.errors.append(f"missing yaml file: {path.relative_to(result.root)}")
+        return {}
+    except Exception as exc:
+        result.errors.append(f"invalid yaml {path.relative_to(result.root)}: {exc}")
+        return {}
+    if not isinstance(payload, dict):
+        result.errors.append(f"invalid yaml {path.relative_to(result.root)}: expected mapping")
+        return {}
+    return payload
 
 
 def _frontmatter(text: str) -> str:
