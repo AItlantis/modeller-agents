@@ -25,7 +25,8 @@ Forbidden:
 1. Read `README.md`.
 2. Read `docs/architecture/BOUNDARIES.md`.
 3. Read `modeller-modules.yaml`.
-4. Run `python -m modeller.cli doctor --root .` before and after structural changes.
+4. Read `docs/vision/Vision.md` for strategic direction (business-need and PRD not yet written).
+5. Run `python -m modeller.cli doctor --root .` before and after structural changes.
 
 ## Skill Rules
 
