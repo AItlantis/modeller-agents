@@ -27,6 +27,11 @@ modeller-agents is not meant to replace the domain judgement of the repositories
 
 The MVP succeeds when an ecosystem maintainer can run `doctor --strict --json` against the repository's own already-registered `aimsun-psp` backend and see an empty `readiness_blockers` array, and when a human reviewer can confirm, from the resulting artifacts, that a real backend smoke actually executed rather than being asserted.
 
+>> modeller-agents should by default manage multi-agents routes. such as architect-agent providing hand-off to tech-lead-agent providing hand-off to worker-agent.
+>> the architect-agent is the main point of contact, and shared with the user, the vision and the workflow through brief documents to build a `goal`.
+>> the tech-lead-agent will accessible for the technical team of the project, and will manage in more details the workflow, plan and list of task to fulfill the goal.
+>> the worker-agent will be responsible for one specific task.
+>> each agents might considere to add `decisions`, `evidents`, `methodes` within the project memory with user approval.
 ---
 
 ## 2. Business problem and opportunity
