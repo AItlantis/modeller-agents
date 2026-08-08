@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/checkpoint-receipt.schema.json",
+  "title": "Checkpoint Receipt",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "checkpoint_id",
+    "mission_id",
+    "task_id",
+    "verified_at",
+    "verification_status",
+    "authorization",
+    "subject_digest"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "checkpoint_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "mission_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "task_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "verified_at": { "type": "string", "minLength": 1 },
+    "verification_status": {
+      "type": "string",
+      "enum": ["verified", "stale", "incompatible", "malformed", "missing"]
+    },
+    "authorization": {
+      "type": "object",
+      "required": ["decision", "actor_id", "actor_role"],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["approved", "approved-with-reservations", "changes-requested", "rejected"]
+        },
+        "actor_id": { "type": "string", "minLength": 1 },
+        "actor_role": { "type": "string", "minLength": 1 },
+        "actor_type": { "type": "string", "enum": ["human", "agent"] }
+      }
+    },
+    "subject_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "schema_compatibility": {
+      "type": "object",
+      "properties": {
+        "expected_schema_version": { "type": "integer" },
+        "observed_schema_version": { "type": "integer" },
+        "compatible": { "type": "boolean" }
+      }
+    },
+    "remediation": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

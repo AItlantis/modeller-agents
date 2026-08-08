@@ -25,6 +25,7 @@ from modeller.vcycle import (
     stage_artifact_digest,
     trace_check_v_cycle,
 )
+from modeller.workflow import write_task_checkpoint
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -561,6 +562,168 @@ class SubagentContractTests(unittest.TestCase):
             self.assertTrue(gate.ok, gate.errors)
 
 
+    def test_work_order_binds_valid_mission_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_v_cycle_runtime(Path(tmp))
+            init_v_cycle_run(root, "run-identity", invocation_mode="stage", requested_stage="project-governance")
+            mission_identity = {
+                "schema_version": 1,
+                "project_id": "proj-alpha",
+                "mission_id": "mission-001",
+                "task_id": "task-001",
+                "created_at": "2026-08-08T00:00:00Z",
+                "lineage": [],
+            }
+
+            work_order = build_subagent_work_order(
+                root,
+                run_id="run-identity",
+                target_repository="aimsun-psp",
+                task="Create brief and recon evidence.",
+                agent_id="agent-recon",
+                mission_identity=mission_identity,
+            )
+
+            self.assertEqual(work_order["mission_identity"]["mission_id"], "mission-001")
+            check = validate_subagent_work_order(work_order)
+            self.assertTrue(check.ok, check.errors)
+
+    def test_work_order_rejects_invalid_mission_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_v_cycle_runtime(Path(tmp))
+            init_v_cycle_run(root, "run-identity-bad", invocation_mode="stage", requested_stage="project-governance")
+
+            with self.assertRaises(ValueError):
+                build_subagent_work_order(
+                    root,
+                    run_id="run-identity-bad",
+                    target_repository="aimsun-psp",
+                    task="Create brief and recon evidence.",
+                    agent_id="agent-recon",
+                    mission_identity={"project_id": "not a safe token!"},
+                )
+
+    def test_lane_receipt_requires_matching_mission_identity_when_work_order_binds_one(self) -> None:
+        work_order = _work_order()
+        work_order["mission_identity"] = {
+            "schema_version": 1,
+            "project_id": "proj-alpha",
+            "mission_id": "mission-001",
+            "task_id": "task-001",
+            "created_at": "2026-08-08T00:00:00Z",
+            "lineage": [],
+        }
+        receipt_missing = _receipt(work_order)
+        receipt_mismatched = _receipt(work_order)
+        receipt_mismatched["mission_identity"] = {**work_order["mission_identity"], "task_id": "task-999"}
+        receipt_matching = _receipt(work_order)
+        receipt_matching["mission_identity"] = dict(work_order["mission_identity"])
+
+        missing_check = validate_subagent_lane_receipt(work_order, receipt_missing)
+        mismatched_check = validate_subagent_lane_receipt(work_order, receipt_mismatched)
+        matching_check = validate_subagent_lane_receipt(work_order, receipt_matching)
+
+        self.assertFalse(missing_check.ok)
+        self.assertTrue(any("mission_identity" in error for error in missing_check.errors), missing_check.errors)
+        self.assertFalse(mismatched_check.ok)
+        self.assertTrue(any("task_id" in error for error in mismatched_check.errors), mismatched_check.errors)
+        self.assertTrue(matching_check.ok, matching_check.errors)
+
+    def test_persist_lane_receipt_fails_closed_on_missing_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_v_cycle_runtime(Path(tmp))
+            init_v_cycle_run(root, "run-lane-cp-missing", invocation_mode="stage", requested_stage="project-governance")
+            work_order = build_subagent_work_order(
+                root,
+                run_id="run-lane-cp-missing",
+                target_repository="aimsun-psp",
+                target_path="domains/_41_MacroscopicResult/pipelines/rendering_geh",
+                task="Create brief and recon evidence.",
+                agent_id="agent-recon",
+            )
+            receipt = _receipt(work_order)
+            receipt["checkpoint_id"] = "cp-never-written"
+
+            result = persist_subagent_lane_receipt(root, work_order, receipt)
+
+            self.assertFalse(result["ok"], result)
+            self.assertTrue(any("checkpoint verification failed" in error for error in result["errors"]), result)
+            self.assertFalse((root / ".modeller/runs/run-lane-cp-missing/subagents").exists())
+
+    def test_persist_lane_receipt_succeeds_with_verified_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_v_cycle_runtime(Path(tmp))
+            init_v_cycle_run(root, "run-lane-cp-ok", invocation_mode="stage", requested_stage="project-governance")
+            work_order = build_subagent_work_order(
+                root,
+                run_id="run-lane-cp-ok",
+                target_repository="aimsun-psp",
+                target_path="domains/_41_MacroscopicResult/pipelines/rendering_geh",
+                task="Create brief and recon evidence.",
+                agent_id="agent-recon",
+            )
+            written = write_task_checkpoint(
+                root,
+                "run-lane-cp-ok",
+                task_id="task-001",
+                project_id="proj-alpha",
+                mission_id="mission-001",
+                actor_id="reviewer-1",
+                actor_role="developer",
+                decision="approved",
+            )
+            receipt = _receipt(work_order)
+            receipt["checkpoint_id"] = written["checkpoint_id"]
+
+            result = persist_subagent_lane_receipt(root, work_order, receipt)
+
+            self.assertTrue(result["ok"], result)
+
+    def test_ingest_lane_receipt_fails_closed_on_stale_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_v_cycle_runtime(Path(tmp))
+            init_v_cycle_run(root, "run-ingest-cp-stale", invocation_mode="stage", requested_stage="project-governance")
+            work_order = build_subagent_work_order(
+                root,
+                run_id="run-ingest-cp-stale",
+                target_repository="aimsun-psp",
+                target_path="domains/_41_MacroscopicResult/pipelines/rendering_geh",
+                task="Create brief and recon evidence.",
+                agent_id="agent-recon",
+            )
+            written = write_task_checkpoint(
+                root,
+                "run-ingest-cp-stale",
+                task_id="task-001",
+                project_id="proj-alpha",
+                mission_id="mission-001",
+                actor_id="reviewer-1",
+                actor_role="developer",
+                decision="approved",
+            )
+            receipt = _receipt(work_order)
+            receipt["checkpoint_id"] = written["checkpoint_id"]
+            record = persist_subagent_lane_receipt(root, work_order, receipt)
+            self.assertTrue(record["ok"], record)
+            # Corrupt the persisted checkpoint file itself so re-verification at ingest time
+            # fails closed (malformed), simulating a checkpoint that no longer reflects a
+            # trustworthy mission/task/authorization binding.
+            (root / ".modeller/runs/run-ingest-cp-stale/checkpoints" / f"{written['checkpoint_id']}.json").write_text(
+                json.dumps({"mission_identity": {}, "checkpoint_receipt": {}}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            result = ingest_subagent_lane_receipt_into_v_cycle_artifacts(
+                root,
+                run_id="run-ingest-cp-stale",
+                receipt_id="lane-test",
+                artifacts=["recon"],
+            )
+
+            self.assertFalse(result["ok"], result)
+            self.assertTrue(any("checkpoint verification failed" in error for error in result["errors"]), result)
+
+
 def _work_order() -> dict:
     return {
         "schema_version": 1,
@@ -658,6 +821,8 @@ def _copy_v_cycle_runtime(tmp: Path) -> Path:
         "method/templates/workflow-artifact.md",
         "schemas/v-cycle-trace.schema.json",
         "schemas/human-review-receipt.schema.json",
+        "schemas/mission-identity.schema.json",
+        "schemas/checkpoint-receipt.schema.json",
         ".claude/plugins/modeller/skills/v-cycle/SKILL.md",
     ]:
         (root / rel).write_text((ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")

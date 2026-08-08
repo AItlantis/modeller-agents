@@ -51,3 +51,40 @@ See `docs/architecture/typed-packs-knowledge-axis.md` (design), `docs/architectu
 (D3–D6 rulings, pilot-scope), and `modelling-knowledge/decisions/0005-knowledge-vault-domain-scope.md`
 (**accepted** vault-scope ruling).
 
+## Addendum: Mission/Task/Checkpoint/Dispatch-Grant Contracts (TESTUDO-P1-modeller-agents)
+
+Added under the "Owns: Runtime routing and workflow gates" heading above, as part of hardening the
+orchestration/dispatch control-plane surface for future Testudo-side consumption
+(`reference-packs/testudo.toml`, `bundles/testudo.bundle.json`):
+
+- `ArtifactLineageDigest`, `MissionIdentity`, `CheckpointAuthorization`, `CheckpointReceipt`,
+  `IdentityValidation` dataclasses and `validate_mission_identity()` / `validate_checkpoint_receipt()`
+  in `src/modeller/contracts.py`, with schemas `schemas/mission-identity.schema.json` and
+  `schemas/checkpoint-receipt.schema.json`.
+- `CapabilityGrant` dataclass and `validate_dispatch_request()` / `validate_dispatch_identity_binding()`
+  (plus path-containment helpers) in `src/modeller/contracts.py`, binding capability grants
+  (role/provider/tools/write_scope) to dispatched subagent work orders.
+- Checkpoint-gated workflow resume support (`CheckpointVerification`, `write_task_checkpoint`,
+  `verify_task_checkpoint`, `resume_workflow_from_checkpoint`) in `src/modeller/workflow.py`, and
+  mission-identity binding plus checkpoint-gated persist/ingest on subagent lane receipts in
+  `src/modeller/subagents.py`.
+
+These contracts describe *how* work orders, checkpoints, and dispatch grants are structured and
+validated inside `modeller-agents`. They do not implement, call, or depend on any Testudo API,
+PostgreSQL, or DuckDB integration — no such gateway exists yet, and building one remains explicitly
+out of scope for this mission.
+
+**Pipeline-schema-ownership boundary is unchanged.** No file under this mission touched
+`PipelineDefinition`, `PipelineCapabilityProfile`, `PipelinePlan`, `PipelineRunRequest`,
+`PipelineRunReceipt`, `CanonicalDatasetManifest`, or `ArtifactManifest`, nor any schema owned by
+`modeller-pipelines`. This reaffirms `AGENTS.md`'s Forbidden list verbatim:
+
+> Forbidden:
+>
+> - move repository-local agents into this repository;
+> - copy backend implementation from `aimsun-psp`;
+> - copy Testudo product UI/runtime logic;
+> - define pipeline schemas owned by `modeller-pipelines`;
+> - store generated memory indexes as authority;
+> - edit vendored subtrees by hand.
+

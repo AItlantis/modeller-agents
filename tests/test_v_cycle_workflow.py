@@ -18,6 +18,14 @@ from modeller.vcycle import (
     stage_artifact_digest,
     trace_check_v_cycle,
 )
+from modeller.workflow import (
+    advance_workflow,
+    complete_artifact,
+    init_workflow,
+    resume_workflow_from_checkpoint,
+    verify_task_checkpoint,
+    write_task_checkpoint,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -250,6 +258,194 @@ class VCycleWorkflowTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["requested_stage"], "deployment")
         self.assertEqual(payload["stage"]["vigilance_level"], "V4")
+
+
+class TaskCheckpointTests(unittest.TestCase):
+    def test_write_and_verify_checkpoint_roundtrips_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_deterministic_workflow_root(Path(tmp))
+            init_workflow(root, "run-checkpoint-ok")
+
+            written = write_task_checkpoint(
+                root,
+                "run-checkpoint-ok",
+                task_id="task-001",
+                project_id="proj-alpha",
+                mission_id="mission-001",
+                actor_id="reviewer-1",
+                actor_role="developer",
+                decision="approved",
+            )
+            verification = verify_task_checkpoint(root, "run-checkpoint-ok", written["checkpoint_id"])
+
+            self.assertTrue(verification.ok, verification.errors)
+            self.assertEqual(verification.verification_status, "verified")
+
+    def test_verify_checkpoint_fails_closed_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_deterministic_workflow_root(Path(tmp))
+            init_workflow(root, "run-checkpoint-missing")
+
+            verification = verify_task_checkpoint(root, "run-checkpoint-missing", "cp-does-not-exist")
+
+            self.assertFalse(verification.ok)
+            self.assertEqual(verification.verification_status, "missing")
+            self.assertTrue(verification.remediation)
+
+    def test_verify_checkpoint_fails_closed_on_state_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_deterministic_workflow_root(Path(tmp))
+            init_workflow(root, "run-checkpoint-stale")
+            written = write_task_checkpoint(
+                root,
+                "run-checkpoint-stale",
+                task_id="task-001",
+                project_id="proj-alpha",
+                mission_id="mission-001",
+                actor_id="reviewer-1",
+                actor_role="developer",
+                decision="approved",
+            )
+
+            complete_artifact(
+                root=root,
+                run_id="run-checkpoint-stale",
+                artifact="brief",
+                updated_by="orchestrator",
+                evidence=(
+                    "Evidence: outcome, scope, source-of-truth repositories, source-boundary, "
+                    "constraints, and acceptance evidence are present."
+                ),
+                output="Output: brief drafted.",
+            )
+            advance_workflow(root, "run-checkpoint-stale")
+            verification = verify_task_checkpoint(root, "run-checkpoint-stale", written["checkpoint_id"])
+
+            self.assertFalse(verification.ok)
+            self.assertEqual(verification.verification_status, "stale")
+
+    def test_verify_checkpoint_fails_closed_on_malformed_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_deterministic_workflow_root(Path(tmp))
+            init_workflow(root, "run-checkpoint-malformed")
+            checkpoint_dir = root / ".modeller/runs/run-checkpoint-malformed/checkpoints"
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            (checkpoint_dir / "cp-bad.json").write_text("{not-json", encoding="utf-8")
+
+            verification = verify_task_checkpoint(root, "run-checkpoint-malformed", "cp-bad")
+
+            self.assertFalse(verification.ok)
+            self.assertEqual(verification.verification_status, "malformed")
+
+    def test_verify_checkpoint_fails_closed_on_non_approving_authorization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_deterministic_workflow_root(Path(tmp))
+            init_workflow(root, "run-checkpoint-rejected")
+            written = write_task_checkpoint(
+                root,
+                "run-checkpoint-rejected",
+                task_id="task-001",
+                project_id="proj-alpha",
+                mission_id="mission-001",
+                actor_id="reviewer-1",
+                actor_role="developer",
+                decision="rejected",
+            )
+
+            verification = verify_task_checkpoint(root, "run-checkpoint-rejected", written["checkpoint_id"])
+
+            self.assertFalse(verification.ok)
+            self.assertTrue(any("does not approve resume" in error for error in verification.errors), verification.errors)
+
+    def test_write_task_checkpoint_rejects_unsafe_identity_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_deterministic_workflow_root(Path(tmp))
+            init_workflow(root, "run-checkpoint-badid")
+
+            with self.assertRaises(ValueError):
+                write_task_checkpoint(
+                    root,
+                    "run-checkpoint-badid",
+                    task_id="task/../escape",
+                    project_id="proj-alpha",
+                    mission_id="mission-001",
+                    actor_id="reviewer-1",
+                    actor_role="developer",
+                    decision="approved",
+                )
+
+    def test_resume_from_checkpoint_requires_verification_before_gate_reexecution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_deterministic_workflow_root(Path(tmp))
+            init_workflow(root, "run-resume-blocked")
+
+            gate = resume_workflow_from_checkpoint(root, "run-resume-blocked", "cp-never-written")
+
+            self.assertFalse(gate.ok)
+            self.assertTrue(any("checkpoint verification failed" in error for error in gate.errors), gate.errors)
+
+    def test_resume_from_checkpoint_still_re_executes_gate_after_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_deterministic_workflow_root(Path(tmp))
+            init_workflow(root, "run-resume-gated")
+            written = write_task_checkpoint(
+                root,
+                "run-resume-gated",
+                task_id="task-001",
+                project_id="proj-alpha",
+                mission_id="mission-001",
+                actor_id="reviewer-1",
+                actor_role="developer",
+                decision="approved",
+            )
+
+            # Checkpoint is verified-clean, but the current step's artifact is still an
+            # incomplete placeholder, so gate re-execution must still fail: a verified
+            # checkpoint alone can never stand in for re-running the declared gate.
+            gate = resume_workflow_from_checkpoint(root, "run-resume-gated", written["checkpoint_id"])
+
+            self.assertFalse(gate.ok)
+            self.assertTrue(gate.errors)
+
+            complete_artifact(
+                root=root,
+                run_id="run-resume-gated",
+                artifact="brief",
+                updated_by="orchestrator",
+                evidence=(
+                    "Evidence: outcome, scope, source-of-truth repositories, source-boundary, "
+                    "constraints, and acceptance evidence are present."
+                ),
+                output="Output: brief drafted.",
+            )
+            advance_workflow(root, "run-resume-gated")
+            gate_after = resume_workflow_from_checkpoint(root, "run-resume-gated", written["checkpoint_id"])
+            # The checkpoint is now stale (state changed by advance), so resume must fail
+            # closed even though the underlying step gate itself would now pass -- checkpoint
+            # verification always runs before gate re-execution is even attempted.
+            self.assertFalse(gate_after.ok)
+            self.assertTrue(any("checkpoint verification failed" in error for error in gate_after.errors), gate_after.errors)
+
+
+def _copy_deterministic_workflow_root(tmp: Path) -> Path:
+    root = tmp / "repo"
+    workflow_dir = root / "method" / "workflows"
+    template_dir = root / "method" / "templates"
+    schema_dir = root / "schemas"
+    workflow_dir.mkdir(parents=True)
+    template_dir.mkdir(parents=True)
+    schema_dir.mkdir(parents=True)
+    (workflow_dir / "modeller-agents-build.workflow.json").write_text(
+        (ROOT / "method/workflows/modeller-agents-build.workflow.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (template_dir / "workflow-artifact.md").write_text(
+        (ROOT / "method/templates/workflow-artifact.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    for name in ["mission-identity.schema.json", "checkpoint-receipt.schema.json"]:
+        (schema_dir / name).write_text((ROOT / "schemas" / name).read_text(encoding="utf-8"), encoding="utf-8")
+    return root
 
 
 def _copy_v_cycle_runtime(tmp: Path) -> Path:

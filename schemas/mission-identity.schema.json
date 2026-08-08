@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/mission-identity.schema.json",
+  "title": "Mission Identity",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "project_id",
+    "mission_id",
+    "task_id",
+    "created_at",
+    "lineage"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "project_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "mission_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "task_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "parent_mission_id": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "created_at": { "type": "string", "minLength": 1 },
+    "binding_scope": {
+      "type": "string",
+      "enum": ["project", "mission", "task"]
+    },
+    "lineage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifact_id", "digest", "produced_at"],
+        "properties": {
+          "artifact_id": { "type": "string", "minLength": 1 },
+          "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+          "produced_at": { "type": "string", "minLength": 1 },
+          "producer_task_id": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

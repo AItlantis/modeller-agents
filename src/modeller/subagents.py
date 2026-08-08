@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .contracts import validate_dispatch_identity_binding, validate_dispatch_request, validate_mission_identity
 from .vcycle import STANDARD_ARTIFACTS, is_v_cycle_run, load_v_cycle_state, record_v_cycle_subagent_receipt
-from .workflow import DEFAULT_WORKFLOW, load_state, load_workflow
+from .workflow import DEFAULT_WORKFLOW, load_state, load_workflow, verify_task_checkpoint
 
 
 SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -35,6 +36,12 @@ def build_subagent_work_order(
     target_path: str | None = None,
     allowed_paths: list[str] | None = None,
     required_tests: list[str] | None = None,
+    mission_identity: dict | None = None,
+    capability_grant: dict | None = None,
+    role: str | None = None,
+    provider: str | None = None,
+    tools: list[str] | None = None,
+    write_scope: list[str] | None = None,
 ) -> dict:
     workflow_family, current_stage, artifact_root, required_artifacts = _current_workflow_context(root, run_id, stage_id)
     allowed = []
@@ -60,7 +67,33 @@ def build_subagent_work_order(
         "gate_commands": [["python", "-m", "modeller.cli", "workflow", "check", "--run-id", run_id]],
         "expected_result_schema": "schemas/subagent-lane-receipt.schema.json",
     }
+    if mission_identity is not None:
+        identity_check = validate_mission_identity(root, mission_identity)
+        if not identity_check.ok:
+            raise ValueError(f"refusing to bind invalid mission identity to work order: {identity_check.errors}")
+        payload["mission_identity"] = mission_identity
+    if capability_grant is not None:
+        dispatch_request = {
+            "role": role,
+            "agent_id": agent_id,
+            "provider": provider,
+            "tools": list(tools or []),
+            "paths": list(payload["allowed_paths"]),
+            "commands": [],
+            "write_scope": list(write_scope if write_scope is not None else payload["allowed_paths"]),
+        }
+        grant_check = validate_dispatch_request(capability_grant, dispatch_request)
+        if not grant_check.ok:
+            raise ValueError(
+                f"refusing to dispatch work order beyond mission/provider capability grant: {grant_check.errors}"
+            )
+        payload["capability_grant"] = capability_grant
+        payload["role"] = role
+        payload["provider"] = provider
+        payload["dispatch_request"] = dispatch_request
     payload["work_order_id"] = "wo-" + _digest(payload)[:16]
+    if capability_grant is not None:
+        payload["dispatch_request"]["request_digest"] = payload["work_order_id"]
     return payload
 
 
@@ -160,6 +193,19 @@ def validate_subagent_lane_receipt(work_order: dict, receipt: dict) -> SubagentV
         for action in forbidden:
             if action and action in command_text:
                 errors.append(f"$.commands_run contains forbidden action {action!r}")
+    work_order_identity = work_order.get("mission_identity")
+    if isinstance(work_order_identity, dict):
+        receipt_identity = receipt.get("mission_identity")
+        if not isinstance(receipt_identity, dict):
+            errors.append("$.mission_identity is required because the work order is bound to a mission identity")
+        else:
+            for key in ("project_id", "mission_id", "task_id"):
+                if receipt_identity.get(key) != work_order_identity.get(key):
+                    errors.append(f"$.mission_identity.{key} must match work order mission_identity {work_order_identity.get(key)!r}")
+    dispatch_request = work_order.get("dispatch_request")
+    if isinstance(dispatch_request, dict):
+        binding_check = validate_dispatch_identity_binding(dispatch_request, receipt)
+        errors.extend(binding_check.errors)
     return SubagentValidation(ok=not errors, errors=errors, warnings=warnings)
 
 
@@ -170,6 +216,10 @@ def persist_subagent_lane_receipt(root: Path, work_order: dict, receipt: dict) -
     context_errors = _validate_receipt_workflow_context(root, work_order, receipt)
     if context_errors:
         return {"ok": False, "errors": context_errors, "warnings": check.warnings}
+    if receipt.get("exit_status") == "complete":
+        checkpoint_errors = _verify_receipt_checkpoint_if_declared(root, str(receipt["run_id"]), receipt)
+        if checkpoint_errors:
+            return {"ok": False, "errors": checkpoint_errors, "warnings": check.warnings}
     stored = dict(receipt)
     stored["validated_at"] = _now()
     stored["work_order_ref"] = {
@@ -296,6 +346,9 @@ def ingest_persisted_subagent_lane_receipt_into_v_cycle_artifacts(
         return {"ok": False, "errors": [f"receipt stage_id must match requested stage {stage_id!r}"], "updated_artifacts": []}
     if receipt.get("exit_status") != "complete":
         return {"ok": False, "errors": ["only complete lane receipts can be ingested into artifacts"], "updated_artifacts": []}
+    checkpoint_errors = _verify_receipt_checkpoint_if_declared(root, run_id, receipt)
+    if checkpoint_errors:
+        return {"ok": False, "errors": checkpoint_errors, "updated_artifacts": []}
     if not is_v_cycle_run(root, run_id):
         return {"ok": False, "errors": ["lane artifact ingestion is only supported for V-cycle runs"], "updated_artifacts": []}
     if not _is_persisted_receipt_path(root, run_id, receipt_stage_id, receipt_path):
@@ -398,6 +451,29 @@ def _validate_receipt_workflow_context(root: Path, work_order: dict, receipt: di
     if current_stage != stage_id:
         errors.append(f"$.stage_id must match active stage {current_stage!r}")
     return errors
+
+
+def _verify_receipt_checkpoint_if_declared(root: Path, run_id: str, receipt: dict) -> list[str]:
+    """Fail-closed checkpoint gate: a receipt that declares a checkpoint_id must resume clean.
+
+    Task completion (ingesting a lane receipt's evidence into the mission artifact trail) must
+    never proceed on a stale, malformed, or missing checkpoint (BR-004, DATA-002, DATA-003). A
+    receipt that names no checkpoint is unaffected -- this only tightens the seam for the
+    resume-from-checkpoint path.
+    """
+
+    checkpoint_id = receipt.get("checkpoint_id")
+    if checkpoint_id is None:
+        return []
+    if not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
+        return ["$.checkpoint_id must be a non-empty string when present"]
+    verification = verify_task_checkpoint(root, run_id, checkpoint_id)
+    if verification.ok:
+        return []
+    return [
+        f"checkpoint verification failed ({verification.verification_status}): {error}"
+        for error in verification.errors
+    ] or [f"checkpoint verification failed: {verification.verification_status}"]
 
 
 def _is_persisted_receipt_path(root: Path, run_id: str, stage_id: str, receipt_path: Path) -> bool:

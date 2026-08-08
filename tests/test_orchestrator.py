@@ -8,13 +8,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from modeller.contracts import CapabilityGrant, validate_dispatch_identity_binding, validate_dispatch_request
 from modeller.orchestrator import build_chat_handoff_prompt, orchestrate_prompt
-from modeller.subagents import persist_subagent_lane_receipt
+from modeller.subagents import build_subagent_work_order, persist_subagent_lane_receipt, validate_subagent_lane_receipt
 from modeller.vcycle import (
     advance_v_cycle,
     apply_human_review_provider,
     check_v_cycle_current_stage,
-    init_v_cycle_run,
     load_v_cycle_state,
 )
 
@@ -530,6 +530,246 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(state["current_stage_index"], 0)
             self.assertEqual(state["stages"][0]["status"], "draft")
             self.assertEqual(state["stages"][0]["review"]["status"], "missing")
+
+
+class CapabilityGrantDispatchTests(unittest.TestCase):
+    """FR-003 mission-scoped capability grants, FR-004 hard identity binding,
+
+    SEC-001 least privilege, SEC-003 path containment. These consume the
+    generic dispatch validators in modeller.contracts and their wiring into
+    modeller.subagents' work-order/receipt lane -- not a new pipeline
+    capability-profile schema.
+    """
+
+    def test_dispatch_request_within_grant_is_accepted(self) -> None:
+        grant = CapabilityGrant(
+            role="build-worker",
+            allowed_tools=["Read", "Edit", "Bash"],
+            allowed_paths=["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+            forbidden_commands=["git commit", "git push"],
+            write_scope=["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+        ).to_dict()
+        request = {
+            "role": "build-worker",
+            "tools": ["Read", "Edit"],
+            "paths": ["domains/_41_MacroscopicResult/pipelines/rendering_geh/step.py"],
+            "commands": [["python", "-m", "pytest", "tests"]],
+            "write_scope": ["domains/_41_MacroscopicResult/pipelines/rendering_geh/step.py"],
+        }
+
+        result = validate_dispatch_request(grant, request)
+
+        self.assertTrue(result.ok, result.errors)
+
+    def test_dispatch_request_rejects_tool_path_and_write_scope_overreach(self) -> None:
+        grant = CapabilityGrant(
+            role="build-worker",
+            allowed_tools=["Read", "Edit"],
+            allowed_paths=["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+            forbidden_commands=["git push"],
+            write_scope=["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+        ).to_dict()
+        request = {
+            "role": "build-worker",
+            "tools": ["Read", "Bash"],
+            "paths": ["domains/_99_Other/pipelines/unrelated/file.py"],
+            "commands": [["git", "push", "origin", "main"]],
+            "write_scope": ["domains/_99_Other/pipelines/unrelated/file.py"],
+        }
+
+        result = validate_dispatch_request(grant, request)
+
+        self.assertFalse(result.ok)
+        self.assertTrue(any("ungranted tool" in error for error in result.errors), result.errors)
+        self.assertTrue(any("outside granted allowed_paths" in error for error in result.errors), result.errors)
+        self.assertTrue(any("forbidden command" in error for error in result.errors), result.errors)
+        self.assertTrue(any("exceeds granted write_scope" in error for error in result.errors), result.errors)
+        self.assertTrue(result.remediation, result.remediation)
+
+    def test_dispatch_request_rejects_role_mismatch(self) -> None:
+        grant = CapabilityGrant(role="build-worker").to_dict()
+        request = {"role": "reviewer", "tools": [], "paths": [], "commands": [], "write_scope": []}
+
+        result = validate_dispatch_request(grant, request)
+
+        self.assertFalse(result.ok)
+        self.assertTrue(any("does not match granted role" in error for error in result.errors), result.errors)
+
+    def test_dispatch_request_rejects_unsafe_and_traversal_paths(self) -> None:
+        grant = CapabilityGrant(
+            role="build-worker",
+            allowed_paths=["domains/_41_MacroscopicResult"],
+            write_scope=["domains/_41_MacroscopicResult"],
+        ).to_dict()
+        request = {
+            "role": "build-worker",
+            "tools": [],
+            "paths": ["../../etc/passwd", "C:\\Windows\\System32"],
+            "commands": [],
+            "write_scope": ["domains/_41_MacroscopicResult/../../outside.txt"],
+        }
+
+        result = validate_dispatch_request(grant, request)
+
+        self.assertFalse(result.ok)
+        self.assertTrue(any("$.paths contains unsafe path" in error for error in result.errors), result.errors)
+        self.assertTrue(any("$.write_scope contains unsafe path" in error for error in result.errors), result.errors)
+
+    def test_dispatch_identity_binding_accepts_matching_receipt(self) -> None:
+        request = {
+            "role": "build-worker",
+            "agent_id": "build-agent-1",
+            "provider": "codex",
+            "request_digest": "wo-abc123",
+        }
+        receipt = {
+            "role": "build-worker",
+            "agent_id": "build-agent-1",
+            "provider": "codex",
+            "request_digest": "wo-abc123",
+        }
+
+        result = validate_dispatch_identity_binding(request, receipt)
+
+        self.assertTrue(result.ok, result.errors)
+
+    def test_dispatch_identity_binding_rejects_role_agent_provider_or_digest_spoof(self) -> None:
+        request = {
+            "role": "build-worker",
+            "agent_id": "build-agent-1",
+            "provider": "codex",
+            "request_digest": "wo-abc123",
+        }
+        spoofed_role = dict(request, role="reviewer")
+        spoofed_agent = dict(request, agent_id="a-different-agent")
+        spoofed_provider = dict(request, provider="claude")
+        spoofed_digest = dict(request, request_digest="wo-forged999")
+
+        role_result = validate_dispatch_identity_binding(request, spoofed_role)
+        agent_result = validate_dispatch_identity_binding(request, spoofed_agent)
+        provider_result = validate_dispatch_identity_binding(request, spoofed_provider)
+        digest_result = validate_dispatch_identity_binding(request, spoofed_digest)
+
+        self.assertFalse(role_result.ok)
+        self.assertTrue(any("$.role" in error for error in role_result.errors), role_result.errors)
+        self.assertFalse(agent_result.ok)
+        self.assertTrue(any("$.agent_id" in error for error in agent_result.errors), agent_result.errors)
+        self.assertFalse(provider_result.ok)
+        self.assertTrue(any("$.provider" in error for error in provider_result.errors), provider_result.errors)
+        self.assertFalse(digest_result.ok)
+        self.assertTrue(any("request_digest" in error for error in digest_result.errors), digest_result.errors)
+
+    def test_build_subagent_work_order_rejects_capability_overreach_before_persisting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_runtime(Path(tmp))
+            setup = orchestrate_prompt(
+                root,
+                prompt="Create a brief.md and recon.md about aimsun-psp rendering_geh pipeline",
+                target_repository="aimsun-psp",
+                run_id="grant-overreach-run",
+            )
+            self.assertTrue(setup["ok"], setup)
+            grant = CapabilityGrant(
+                role="build-worker",
+                allowed_tools=["Read"],
+                allowed_paths=["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+                write_scope=["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+            ).to_dict()
+
+            with self.assertRaises(ValueError) as ctx:
+                build_subagent_work_order(
+                    root,
+                    run_id="grant-overreach-run",
+                    target_repository="aimsun-psp",
+                    task="attempt overreaching dispatch",
+                    agent_id="build-agent-1",
+                    target_path="domains/_41_MacroscopicResult/pipelines/rendering_geh",
+                    capability_grant=grant,
+                    role="build-worker",
+                    provider="codex",
+                    tools=["Read", "Bash"],
+                )
+
+            self.assertIn("ungranted tool", str(ctx.exception))
+            self.assertFalse((root / ".modeller/runs/grant-overreach-run/subagents").exists())
+
+    def test_build_subagent_work_order_binds_capability_grant_when_within_bounds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_runtime(Path(tmp))
+            setup = orchestrate_prompt(
+                root,
+                prompt="Create a brief.md and recon.md about aimsun-psp rendering_geh pipeline",
+                target_repository="aimsun-psp",
+                run_id="grant-ok-run",
+            )
+            self.assertTrue(setup["ok"], setup)
+            grant = CapabilityGrant(
+                role="build-worker",
+                allowed_tools=["Read", "Edit"],
+                allowed_paths=list(setup["work_order"]["allowed_paths"])
+                + ["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+                write_scope=list(setup["work_order"]["allowed_paths"])
+                + ["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+            ).to_dict()
+
+            work_order = build_subagent_work_order(
+                root,
+                run_id="grant-ok-run",
+                target_repository="aimsun-psp",
+                task="dispatch within bounds",
+                agent_id="build-agent-1",
+                target_path="domains/_41_MacroscopicResult/pipelines/rendering_geh",
+                capability_grant=grant,
+                role="build-worker",
+                provider="codex",
+                tools=["Read", "Edit"],
+            )
+
+            self.assertEqual(work_order["role"], "build-worker")
+            self.assertEqual(work_order["provider"], "codex")
+            self.assertEqual(work_order["capability_grant"], grant)
+            self.assertEqual(work_order["dispatch_request"]["request_digest"], work_order["work_order_id"])
+
+    def test_lane_receipt_with_spoofed_identity_is_rejected_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_runtime(Path(tmp))
+            setup = orchestrate_prompt(
+                root,
+                prompt="Create a brief.md and recon.md about aimsun-psp rendering_geh pipeline",
+                target_repository="aimsun-psp",
+                run_id="identity-spoof-run",
+            )
+            self.assertTrue(setup["ok"], setup)
+            grant = CapabilityGrant(
+                role="build-worker",
+                allowed_tools=["Read", "Edit"],
+                allowed_paths=list(setup["work_order"]["allowed_paths"])
+                + ["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+                write_scope=list(setup["work_order"]["allowed_paths"])
+                + ["domains/_41_MacroscopicResult/pipelines/rendering_geh"],
+            ).to_dict()
+            work_order = build_subagent_work_order(
+                root,
+                run_id="identity-spoof-run",
+                target_repository="aimsun-psp",
+                task="dispatch bound to a mission-scoped grant",
+                agent_id="build-agent-1",
+                target_path="domains/_41_MacroscopicResult/pipelines/rendering_geh",
+                capability_grant=grant,
+                role="build-worker",
+                provider="codex",
+                tools=["Read", "Edit"],
+            )
+            receipt = _lane_receipt(work_order)
+            receipt["agent_id"] = "impersonating-agent"
+            receipt["role"] = "build-worker"
+            receipt["provider"] = "codex"
+            receipt["request_digest"] = work_order["work_order_id"]
+
+            check = validate_subagent_lane_receipt(work_order, receipt)
+
+            self.assertFalse(check.ok)
+            self.assertTrue(any("agent_id" in error for error in check.errors), check.errors)
 
 
 def _copy_runtime(tmp: Path, *, root_name: str = "repo") -> Path:
