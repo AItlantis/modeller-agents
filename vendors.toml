@@ -10,12 +10,12 @@ squash = true
 writable = false
 
 [vendor.modeller-pipelines]
-status = "planned"
+status = "active"
 remote = "git@github.com:AItlantis/modeller-pipelines.git"
 ref = "contract-v1.2"
 prefix = "vendor/modeller-pipelines"
 pinned = "dbd00cb1299f3f68add0e5971e6ec808f010059d"
 squash = true
 writable = false
-notes = "The approved contract-v1.2 release point is pinned declaratively; status remains planned until a governed sync populates the read-only vendor subtree."
+notes = "Governed subtree sync populated the read-only vendor subtree from the approved local contract-v1.2 release point."
 

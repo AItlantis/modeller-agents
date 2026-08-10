@@ -1,7 +1,7 @@
 schema_version = "0.1"
 
 [backend.aimsun-psp]
-status = "planned"
+status = "active"
 required = false
 backend_id = "aimsun-psp"
 contract_family = "modeller-pipelines"

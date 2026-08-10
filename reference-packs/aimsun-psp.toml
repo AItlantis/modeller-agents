@@ -1,5 +1,5 @@
 id = "aimsun-psp"
-status = "draft"
+status = "active"
 source_repository = "aimsun-psp"
 owner = "aimsun-psp"
 
@@ -28,8 +28,8 @@ architecture = "three-layer: bootstrap / shared platform / domain"
 action_protocol = "run(model, obj, io, params) -> dict returning ActionResult-shaped dict"
 manifest = "append-only; consumers read by pipeline_id + output_key; never mutate upstream entries"
 key_pipeline = "vwe"
-smoke_pipeline = "seam_smoke"
-smoke_note = "seam_smoke is Aimsun-free and CI-safe; use it as the default for pipeline-smoke invocations"
+smoke_pipeline = "rendering-outputs"
+smoke_note = "rendering-outputs is Aimsun-free in artifact mode and passed the contract smoke against the pinned 1.2 backend contract"
 
 [invariants]
 main_thread = "Aimsun model/catalog/script/experiment API calls must stay on the main thread or be marshalled through main_thread_executor"
@@ -37,4 +37,4 @@ qt_compat = "all UI code imports Qt through shared/ui/qt_compat.py; never direct
 bootstrap_marker = "every entry point self-bootstraps via aimsun_psp/bootstrap.py before importing Qt, shared, or domain modules"
 
 [open_decisions]
-O1 = "authoritative aimsun-psp remote not confirmed; blocks backends.toml registration"
+O1 = "Resolved for the local integration gate: backend.json, contract.lock, and the contract-v1.2 smoke were verified from the local aimsun-psp checkout; remote publication remains an operational concern."

@@ -1,5 +1,5 @@
 id = "modeller-pipelines"
-status = "draft"
+status = "active"
 source_repository = "modeller-pipelines"
 owner = "modeller-pipelines"
 role = "contract-authority"
@@ -47,9 +47,10 @@ location = "backend repo root"
 approved_release = "modeller-pipelines contract-v1.2 dbd00cb1299f3f68add0e5971e6ec808f010059d"
 
 [schema_resolution]
-status = "blocked"
+status = "ready"
 required_source = "vendor/modeller-pipelines/contracts/schemas"
-blocker = "The pinned release is recorded, but vendor/modeller-pipelines is not populated. Sibling-checkout fallback remains enabled for development and remains a strict-readiness blocker until a governed vendor sync resolves the pinned source."
+resolved_source = "vendor/modeller-pipelines/contracts/schemas"
+resolution = "Governed subtree sync populated the pinned contract-v1.2 release; strict schema validation now resolves from the vendor subtree."
 
 [invariants]
 minirunner_max_lines = 200

@@ -44,18 +44,18 @@ class DoctorCliTests(unittest.TestCase):
         self.assertEqual(backend["expected_contract"], "1.2")
         self.assertEqual(backend["contract_ref"], "contract-v1.2")
         self.assertEqual(backend["contract_sha"], expected_sha)
-        self.assertEqual(backend["status"], "planned")
+        self.assertEqual(backend["status"], "active")
 
         vendor = vendors["vendor"]["modeller-pipelines"]
         self.assertEqual(vendor["ref"], "contract-v1.2")
         self.assertEqual(vendor["pinned"], expected_sha)
-        self.assertEqual(vendor["status"], "planned")
+        self.assertEqual(vendor["status"], "active")
 
         pack_vendor = reference_pack["vendor"]
         self.assertEqual(pack_vendor["ref"], "contract-v1.2")
         self.assertEqual(pack_vendor["pinned"], expected_sha)
-        self.assertEqual(reference_pack["status"], "draft")
-        self.assertEqual(reference_pack["schema_resolution"]["status"], "blocked")
+        self.assertEqual(reference_pack["status"], "active")
+        self.assertEqual(reference_pack["schema_resolution"]["status"], "ready")
 
     def test_doctor_warns_about_deactivated_domain_on_current_repo(self) -> None:
         # F-A: domain routability is intentionally disabled in the vault and
@@ -143,13 +143,10 @@ class DoctorCliTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(any("not planned" in error for error in result.errors), result.errors)
         self.assertTrue(any("to be pinned" in error for error in result.errors), result.errors)
-        self.assertTrue(any("sibling fallback" in error for error in result.errors), result.errors)
         codes = {blocker["code"] for blocker in result.readiness_blockers}
         self.assertIn("reference-pack-not-active", codes)
         self.assertIn("vendor-not-synced", codes)
         self.assertIn("vendor-not-pinned", codes)
-        self.assertIn("schema-sibling-fallback", codes)
-        self.assertIn("backend-not-active", codes)
 
     def test_doctor_cli_strict_returns_failure(self) -> None:
         stdout = StringIO()
@@ -205,7 +202,7 @@ class DoctorCliTests(unittest.TestCase):
         self.assertTrue(any("strict readiness" in error for error in payload["errors"]), payload)
         self.assertTrue(payload["readiness_blockers"])
         self.assertTrue(any(blocker["code"] == "vendor-not-pinned" for blocker in payload["readiness_blockers"]))
-        self.assertTrue(any(blocker["code"] == "backend-not-active" for blocker in payload["readiness_blockers"]))
+        self.assertTrue(any(blocker["code"] == "reference-pack-not-active" for blocker in payload["readiness_blockers"]))
 
     def test_readiness_report_maps_strict_blockers_to_actions(self) -> None:
         report = build_readiness_report(ROOT)
@@ -213,11 +210,9 @@ class DoctorCliTests(unittest.TestCase):
         self.assertFalse(report.ok)
         codes = {action.code for action in report.actions}
         self.assertIn("vendor-not-synced", codes)
-        self.assertIn("schema-sibling-fallback", codes)
-        self.assertIn("backend-not-active", codes)
+        self.assertIn("reference-pack-not-active", codes)
         commands = "\n".join(command for action in report.actions for command in action.commands)
         self.assertIn("modeller.cli sync", commands)
-        self.assertIn("modeller.cli run", commands)
 
     def test_readiness_cli_json_is_machine_readable(self) -> None:
         stdout = StringIO()
@@ -230,10 +225,10 @@ class DoctorCliTests(unittest.TestCase):
         self.assertEqual(payload["blocker_count"], len(payload["readiness_blockers"]))
         self.assertTrue(payload["actions"])
 
-    def test_backend_check_accepts_planned_backend_without_local_root(self) -> None:
+    def test_backend_check_requires_local_root_for_active_backend(self) -> None:
         result = check_backend(ROOT, "aimsun-psp")
-        self.assertTrue(result.ok, result)
-        self.assertIn("planned", result.status)
+        self.assertFalse(result.ok, result)
+        self.assertIn("backend local root is not configured", result.errors)
 
     def test_sync_plan_does_not_execute_git(self) -> None:
         plan = plan_sync(ROOT, "modeller-pipelines")
