@@ -1,0 +1,64 @@
+{
+  "schema_version": "0.1",
+  "workflow_id": "modeller-agents-build",
+  "run_id": "reviewer-checkpoint-smoke-001",
+  "current_step_index": 0,
+  "status": "running",
+  "created_at": "2026-08-08T10:52:01Z",
+  "updated_at": "2026-08-08T10:52:01Z",
+  "artifact_root": ".modeller\\runs\\reviewer-checkpoint-smoke-001\\artifacts",
+  "steps": [
+    {
+      "id": "intake",
+      "status": "in_progress",
+      "required_artifacts": [
+        "brief"
+      ]
+    },
+    {
+      "id": "requirements",
+      "status": "pending",
+      "required_artifacts": [
+        "prd",
+        "decisions"
+      ]
+    },
+    {
+      "id": "planning",
+      "status": "pending",
+      "required_artifacts": [
+        "backlog"
+      ]
+    },
+    {
+      "id": "orchestration-design",
+      "status": "pending",
+      "required_artifacts": [
+        "skills",
+        "agents",
+        "memory"
+      ]
+    },
+    {
+      "id": "implementation",
+      "status": "pending",
+      "required_artifacts": [
+        "implementation"
+      ]
+    },
+    {
+      "id": "documentation",
+      "status": "pending",
+      "required_artifacts": [
+        "documentation"
+      ]
+    },
+    {
+      "id": "handoff",
+      "status": "pending",
+      "required_artifacts": [
+        "handoff"
+      ]
+    }
+  ]
+}
