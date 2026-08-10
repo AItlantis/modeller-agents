@@ -141,12 +141,10 @@ class DoctorCliTests(unittest.TestCase):
     def test_doctor_strict_rejects_readiness_warnings(self) -> None:
         result = run_doctor(ROOT, strict=True)
         self.assertFalse(result.ok)
-        self.assertTrue(any("not planned" in error for error in result.errors), result.errors)
-        self.assertTrue(any("to be pinned" in error for error in result.errors), result.errors)
         codes = {blocker["code"] for blocker in result.readiness_blockers}
         self.assertIn("reference-pack-not-active", codes)
-        self.assertIn("vendor-not-synced", codes)
-        self.assertIn("vendor-not-pinned", codes)
+        self.assertNotIn("vendor-not-synced", codes)
+        self.assertNotIn("vendor-not-pinned", codes)
 
     def test_doctor_cli_strict_returns_failure(self) -> None:
         stdout = StringIO()
@@ -201,7 +199,6 @@ class DoctorCliTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertTrue(any("strict readiness" in error for error in payload["errors"]), payload)
         self.assertTrue(payload["readiness_blockers"])
-        self.assertTrue(any(blocker["code"] == "vendor-not-pinned" for blocker in payload["readiness_blockers"]))
         self.assertTrue(any(blocker["code"] == "reference-pack-not-active" for blocker in payload["readiness_blockers"]))
 
     def test_readiness_report_maps_strict_blockers_to_actions(self) -> None:
@@ -209,10 +206,7 @@ class DoctorCliTests(unittest.TestCase):
 
         self.assertFalse(report.ok)
         codes = {action.code for action in report.actions}
-        self.assertIn("vendor-not-synced", codes)
         self.assertIn("reference-pack-not-active", codes)
-        commands = "\n".join(command for action in report.actions for command in action.commands)
-        self.assertIn("modeller.cli sync", commands)
 
     def test_readiness_cli_json_is_machine_readable(self) -> None:
         stdout = StringIO()

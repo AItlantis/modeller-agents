@@ -1,13 +1,14 @@
 schema_version = "0.1"
 
 [vendor.modeller-memory]
-status = "planned"
+status = "active"
 remote = "git@github.com:AItlantis/modeller-memory.git"
-ref = "main"
+ref = "b4728f88567a0acc1caa443596012c515c11d4ad"
 prefix = "vendor/modeller-memory"
-pinned = ""
+pinned = "b4728f88567a0acc1caa443596012c515c11d4ad"
 squash = true
 writable = false
+notes = "Governed subtree sync populated the read-only vendor subtree from the verified modeller-memory main commit; the configured SSH alias/canonical remote remains an operational transport detail to reconcile before remote publication."
 
 [vendor.modeller-pipelines]
 status = "active"
