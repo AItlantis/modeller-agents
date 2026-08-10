@@ -14,6 +14,8 @@ from modeller.adapters.testudo_gateway import (
     GatewayIdempotencyPolicy,
     InMemoryGatewayIdempotencyStore,
     TestudoGatewayAdapter,
+    activation_preparation_contract_digest,
+    activation_preparation_evidence_digest,
     canonical_digest,
     canonical_json,
 )
@@ -21,6 +23,8 @@ from modeller.adapters.testudo_gateway import (
 
 ROOT = Path(__file__).resolve().parents[1]
 VECTOR_FIXTURE = ROOT / "tests" / "fixtures" / "testudo_gateway_canonical_vectors.json"
+ACTIVATION_FIXTURE = ROOT / "tests" / "fixtures" / "activation_preparation_manifest.json"
+ACTIVATION_SCHEMA_FIXTURE = ROOT / "tests" / "fixtures" / "activation_preparation_manifest.schema.json"
 VALID_DIGEST = "sha256:" + "a" * 64
 
 
@@ -350,6 +354,61 @@ class TestudoGatewayAdapterTests(unittest.TestCase):
         self.assertTrue(reused.ok, reused.errors)
         self.assertFalse(reused.duplicate)
         self.assertEqual(len(second_transport.requests), 1)
+
+    def test_activation_preparation_fixture_is_strict_and_zero_call(self) -> None:
+        manifest = json.loads(ACTIVATION_FIXTURE.read_text(encoding="utf-8"))
+        schema = json.loads(ACTIVATION_SCHEMA_FIXTURE.read_text(encoding="utf-8"))
+        self.assertFalse(schema["additionalProperties"])
+        self.assertFalse(schema["properties"]["zero_call_assertions"]["additionalProperties"])
+        self.assertEqual(set(schema["required"]), set(manifest))
+        self.assertEqual(manifest["contract_digest"], activation_preparation_contract_digest())
+        self.assertEqual(manifest["evidence_digest"], activation_preparation_evidence_digest(manifest))
+
+        class ExplodingTransport:
+            def send(self, operation, payload, idempotency_key):
+                raise AssertionError(f"activation preparation called transport: {operation}")
+
+        adapter, _ = _adapter(transport=ExplodingTransport())
+        validation = adapter.validate_activation_preparation(manifest)
+        self.assertTrue(validation.ok, validation.errors)
+        self.assertEqual(validation.zero_call_assertions, {"network_calls": 0, "transport_calls": 0})
+        self.assertEqual(adapter.validate_activation_preparation_manifest(manifest).to_dict(), validation.to_dict())
+
+    def test_activation_preparation_rejects_unsafe_or_mismatched_cases_before_transport(self) -> None:
+        accepted = json.loads(ACTIVATION_FIXTURE.read_text(encoding="utf-8"))
+        cases = {
+            "activation": {"activation": True},
+            "network": {"network_calls_allowed": True},
+            "transport": {"transport_calls_allowed": True},
+            "production credentials": {"credential_source": "production_secret"},
+            "owner placeholder": {"activation_owner": "TBD"},
+            "abort placeholder": {"abort_authority": "placeholder"},
+            "canary placeholder": {"canary_stop_criteria": ["TODO"]},
+            "rollback placeholder": {"rollback_steps": ["replace-me"]},
+            "contract digest mismatch": {"contract_digest": "sha256:" + "b" * 64},
+            "evidence digest mismatch": {"evidence_digest": "sha256:" + "c" * 64},
+            "unknown property": {"unexpected": True},
+            "nonzero call assertion": {"zero_call_assertions": {"network_calls": 1, "transport_calls": 0}},
+        }
+        for name, changes in cases.items():
+            with self.subTest(case=name):
+                transport = DryRunTransport()
+                adapter, _ = _adapter(transport=transport)
+                candidate = {**accepted, **changes}
+                result = adapter.validate_activation_preparation(candidate)
+                self.assertFalse(result.ok, result.errors)
+                self.assertEqual(transport.requests, [])
+
+    def test_activation_preparation_digest_helpers_are_typed_lowercase_sha256(self) -> None:
+        manifest = json.loads(ACTIVATION_FIXTURE.read_text(encoding="utf-8"))
+        for digest in (manifest["contract_digest"], manifest["evidence_digest"]):
+            self.assertRegex(digest, r"^sha256:[0-9a-f]{64}$")
+        changed = {**manifest, "contract_version": "1.1"}
+        self.assertNotEqual(
+            activation_preparation_contract_digest("aimsun-psp", "1.1"),
+            manifest["contract_digest"],
+        )
+        self.assertNotEqual(activation_preparation_evidence_digest(changed), manifest["evidence_digest"])
 
 
 if __name__ == "__main__":

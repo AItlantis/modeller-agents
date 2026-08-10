@@ -8,7 +8,7 @@ an integration test needs to control responses or transient failures.
 
 # The adapter intentionally keeps one compact boundary module. These limits
 # describe the transport/result seam rather than production domain logic.
-# pylint: disable=import-error,line-too-long,too-few-public-methods,too-many-arguments,too-many-instance-attributes,too-many-locals,too-many-return-statements
+# pylint: disable=import-error,line-too-long,too-few-public-methods,too-many-arguments,too-many-instance-attributes,too-many-locals,too-many-return-statements,too-many-lines,too-many-branches,too-many-statements
 
 from __future__ import annotations
 
@@ -50,6 +50,33 @@ APPROVED_PLAN_REF_FIELDS = ("approved_plan_ref", "approved_plan_reference", "pla
 APPROVED_PLAN_DIGEST_FIELDS = ("approved_plan_digest", "plan_digest")
 BASELINE_REF_FIELDS = ("baseline_ref", "baseline_reference")
 BASELINE_DIGEST_FIELDS = ("baseline_digest",)
+ACTIVATION_PREPARATION_BACKEND_ID = "aimsun-psp"
+ACTIVATION_PREPARATION_CREDENTIAL_SOURCE = "ephemeral_env_or_secret_injection"
+ACTIVATION_PREPARATION_FIELDS = frozenset(
+    {
+        "backend_id",
+        "contract_version",
+        "contract_digest",
+        "activation",
+        "credential_source",
+        "network_calls_allowed",
+        "transport_calls_allowed",
+        "canary_stop_criteria",
+        "rollback_steps",
+        "activation_owner",
+        "abort_authority",
+        "evidence_digest",
+        "zero_call_assertions",
+    }
+)
+ACTIVATION_PREPARATION_REQUIRED_FIELDS = ACTIVATION_PREPARATION_FIELDS
+ACTIVATION_PREPARATION_EVIDENCE_FIELDS = tuple(
+    sorted(ACTIVATION_PREPARATION_FIELDS - {"evidence_digest"})
+)
+ACTIVATION_PREPARATION_PLACEHOLDER_RE = re.compile(
+    r"(?:^|[\s_:/.-])(placeholder|tbd|todo|unknown|unset|replace[-_ ]?me|example|changeme|n/?a)(?:$|[\s_:/.-])",
+    re.IGNORECASE,
+)
 
 
 class TestudoGatewayError(ValueError):
@@ -132,6 +159,28 @@ class ContractValidation:
             "errors": list(self.errors),
             "warnings": list(self.warnings),
             "contract_sha": self.contract_sha,
+        }
+
+
+@dataclass(frozen=True)
+class ActivationPreparationValidation:
+    """Result of validating the offline activation-preparation contract."""
+
+    ok: bool
+    manifest: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    zero_call_assertions: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the validation result as a JSON-shaped mapping."""
+
+        return {
+            "ok": self.ok,
+            "manifest": copy.deepcopy(self.manifest),
+            "errors": list(self.errors),
+            "warnings": list(self.warnings),
+            "zero_call_assertions": dict(self.zero_call_assertions),
         }
 
 
@@ -350,6 +399,126 @@ class TestudoGatewayAdapter:
         if not check.ok:
             raise ContractMismatchError("; ".join(check.errors))
         return check
+
+    def validate_activation_preparation(
+        self,
+        manifest: Mapping[str, Any] | None,
+    ) -> ActivationPreparationValidation:
+        """Validate a strictly offline activation-preparation manifest.
+
+        This method deliberately has no activation, registry, credential, network,
+        or transport side effects.  It validates the local pinned contract and the
+        canonical manifest/evidence digests before any caller can proceed.
+        """
+
+        errors: list[str] = []
+        candidate = dict(manifest) if isinstance(manifest, Mapping) else {}
+        if not isinstance(manifest, Mapping):
+            errors.append("activation-preparation manifest must be an object")
+        unknown = sorted(set(candidate) - ACTIVATION_PREPARATION_FIELDS)
+        if unknown:
+            errors.append(f"activation-preparation manifest has unexpected properties: {unknown}")
+        missing = sorted(ACTIVATION_PREPARATION_REQUIRED_FIELDS - set(candidate))
+        if missing:
+            errors.append(f"activation-preparation manifest is missing required properties: {missing}")
+
+        backend_id = candidate.get("backend_id")
+        if backend_id != ACTIVATION_PREPARATION_BACKEND_ID:
+            errors.append(
+                f"activation-preparation backend_id must be {ACTIVATION_PREPARATION_BACKEND_ID!r}"
+            )
+        contract_version = candidate.get("contract_version")
+        if contract_version != EXPECTED_PIPELINES_CONTRACT:
+            errors.append(
+                f"activation-preparation contract_version {contract_version!r} "
+                f"does not match expected {EXPECTED_PIPELINES_CONTRACT!r}"
+            )
+        if candidate.get("activation") is not False:
+            errors.append("activation-preparation activation must be false")
+        if candidate.get("credential_source") != ACTIVATION_PREPARATION_CREDENTIAL_SOURCE:
+            errors.append(
+                "activation-preparation credential_source must be "
+                f"{ACTIVATION_PREPARATION_CREDENTIAL_SOURCE!r}"
+            )
+        if candidate.get("network_calls_allowed") is not False:
+            errors.append("activation-preparation network_calls_allowed must be false")
+        if candidate.get("transport_calls_allowed") is not False:
+            errors.append("activation-preparation transport_calls_allowed must be false")
+
+        for field_name in ("activation_owner", "abort_authority"):
+            if not _is_concrete_activation_text(candidate.get(field_name)):
+                errors.append(f"activation-preparation {field_name} must be concrete and non-placeholder")
+        for field_name in ("canary_stop_criteria", "rollback_steps"):
+            errors.extend(_validate_activation_text_list(candidate.get(field_name), field_name))
+
+        zero_call_assertions = candidate.get("zero_call_assertions")
+        if not isinstance(zero_call_assertions, Mapping):
+            errors.append("activation-preparation zero_call_assertions must be an object")
+            zero_call_counts: dict[str, int] = {}
+        else:
+            observed_zero_keys = set(zero_call_assertions)
+            if observed_zero_keys != {"network_calls", "transport_calls"}:
+                errors.append(
+                    "activation-preparation zero_call_assertions must contain only "
+                    "network_calls and transport_calls"
+                )
+            zero_call_counts = {}
+            for call_type in ("network_calls", "transport_calls"):
+                count = zero_call_assertions.get(call_type)
+                if isinstance(count, bool) or not isinstance(count, int) or count != 0:
+                    errors.append(
+                        f"activation-preparation zero_call_assertions.{call_type} must be integer 0"
+                    )
+                else:
+                    zero_call_counts[call_type] = count
+
+        contract = self.validate_contract()
+        if not contract.ok:
+            errors.extend(f"pinned contract: {error}" for error in contract.errors)
+
+        contract_digest = candidate.get("contract_digest")
+        if not isinstance(contract_digest, str) or not IDEMPOTENCY_DIGEST_RE.fullmatch(contract_digest):
+            errors.append("activation-preparation contract_digest must be sha256:<64 lowercase hex>")
+        elif isinstance(backend_id, str) and isinstance(contract_version, str):
+            expected_digest = activation_preparation_contract_digest(backend_id, contract_version)
+            if contract_digest != expected_digest:
+                errors.append("activation-preparation contract_digest is not canonically compatible")
+
+        evidence_digest = candidate.get("evidence_digest")
+        if not isinstance(evidence_digest, str) or not IDEMPOTENCY_DIGEST_RE.fullmatch(evidence_digest):
+            errors.append("activation-preparation evidence_digest must be sha256:<64 lowercase hex>")
+        elif not errors:
+            expected_evidence_digest = activation_preparation_evidence_digest(candidate)
+            if evidence_digest != expected_evidence_digest:
+                errors.append("activation-preparation evidence_digest is not canonically compatible")
+        elif isinstance(evidence_digest, str) and isinstance(candidate, dict):
+            # Still report a mismatched canonical evidence digest when the other
+            # failures are independent; never let malformed fields raise here.
+            try:
+                if evidence_digest != activation_preparation_evidence_digest(candidate):
+                    errors.append("activation-preparation evidence_digest is not canonically compatible")
+            except (CanonicalizationError, TypeError, ValueError):
+                pass
+
+        return ActivationPreparationValidation(
+            ok=not errors,
+            manifest=copy.deepcopy(candidate),
+            errors=errors,
+            zero_call_assertions=zero_call_counts,
+        )
+
+    def validate_activation_preparation_manifest(
+        self,
+        manifest: Mapping[str, Any] | None,
+    ) -> ActivationPreparationValidation:
+        """Compatibility alias for callers naming the manifest explicitly."""
+
+        return self.validate_activation_preparation(manifest)
+
+    def prepare_activation(self, manifest: Mapping[str, Any] | None) -> ActivationPreparationValidation:
+        """Validate preparation only; no activation action is available here."""
+
+        return self.validate_activation_preparation(manifest)
 
     def create_mission(
         self,
@@ -610,6 +779,52 @@ class TestudoGatewayAdapter:
             correlation_id=correlation,
             attempts=attempts,
         )
+
+
+def activation_preparation_contract_digest(
+    backend_id: str = ACTIVATION_PREPARATION_BACKEND_ID,
+    contract_version: str = EXPECTED_PIPELINES_CONTRACT,
+    contract_sha: str = PINNED_PIPELINES_CONTRACT_SHA,
+) -> str:
+    """Return the typed digest binding a backend to its pinned contract."""
+
+    return canonical_digest(
+        {
+            "backend_id": backend_id,
+            "contract_sha": contract_sha,
+            "contract_version": contract_version,
+        }
+    )
+
+
+def activation_preparation_evidence_digest(manifest: Mapping[str, Any]) -> str:
+    """Return the typed digest for manifest evidence, excluding its own digest."""
+
+    projection = {
+        field_name: copy.deepcopy(manifest[field_name])
+        for field_name in ACTIVATION_PREPARATION_EVIDENCE_FIELDS
+        if field_name in manifest
+    }
+    return canonical_digest(projection)
+
+
+def _is_concrete_activation_text(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return bool(text) and len(text) <= 256 and not any(char in text for char in "\r\n\t") and not ACTIVATION_PREPARATION_PLACEHOLDER_RE.search(text)
+
+
+def _validate_activation_text_list(value: Any, field_name: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        return [f"activation-preparation {field_name} must be a non-empty array"]
+    errors: list[str] = []
+    for index, item in enumerate(value):
+        if not _is_concrete_activation_text(item):
+            errors.append(
+                f"activation-preparation {field_name}[{index}] must be concrete and non-placeholder"
+            )
+    return errors
 
 
 def _merge_payload(

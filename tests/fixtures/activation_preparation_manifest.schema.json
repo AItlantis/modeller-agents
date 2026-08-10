@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/activation_preparation_manifest.schema.json",
+  "title": "Testudo Activation Preparation Manifest",
+  "description": "Strict offline rehearsal contract; it cannot authorize live activation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "backend_id",
+    "contract_version",
+    "contract_digest",
+    "activation",
+    "credential_source",
+    "network_calls_allowed",
+    "transport_calls_allowed",
+    "canary_stop_criteria",
+    "rollback_steps",
+    "activation_owner",
+    "abort_authority",
+    "evidence_digest",
+    "zero_call_assertions"
+  ],
+  "properties": {
+    "backend_id": { "type": "string", "const": "aimsun-psp", "minLength": 1 },
+    "contract_version": { "type": "string", "const": "1.2" },
+    "contract_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "activation": { "const": false },
+    "credential_source": { "type": "string", "const": "ephemeral_env_or_secret_injection" },
+    "network_calls_allowed": { "const": false },
+    "transport_calls_allowed": { "const": false },
+    "canary_stop_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "rollback_steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "activation_owner": { "type": "string", "minLength": 1 },
+    "abort_authority": { "type": "string", "minLength": 1 },
+    "evidence_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "zero_call_assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["network_calls", "transport_calls"],
+      "properties": {
+        "network_calls": { "type": "integer", "const": 0 },
+        "transport_calls": { "type": "integer", "const": 0 }
+      }
+    }
+  }
+}

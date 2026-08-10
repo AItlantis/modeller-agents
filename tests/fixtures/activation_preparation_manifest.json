@@ -1,0 +1,26 @@
+{
+  "backend_id": "aimsun-psp",
+  "contract_version": "1.2",
+  "contract_digest": "sha256:54ce47e1e636f8fd73f65eee91964d43b67dad63dcf2462e7b83a3f556fc490c",
+  "activation": false,
+  "credential_source": "ephemeral_env_or_secret_injection",
+  "network_calls_allowed": false,
+  "transport_calls_allowed": false,
+  "canary_stop_criteria": [
+    "Stop immediately on any network or transport call.",
+    "Stop on activation, credential-source, contract, or evidence mismatch.",
+    "Stop on any failed zero-call assertion or canary health check."
+  ],
+  "rollback_steps": [
+    "Stop preparation workers.",
+    "Roll back open disposable transactions.",
+    "Remove only dry-run activation artifacts and retain evidence receipts."
+  ],
+  "activation_owner": "testudo-integration-owner",
+  "abort_authority": "testudo-integration-abort-authority",
+  "evidence_digest": "sha256:4cdd7dc51eb271ccd8ca6e6c8c4a6407bf68cf328899a41718bb0b48efe01bfc",
+  "zero_call_assertions": {
+    "network_calls": 0,
+    "transport_calls": 0
+  }
+}
