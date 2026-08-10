@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/modeller-pipelines/contracts/1.2/dock.schema.json",
+  "title": "Modeller Dock Manifest Entry",
+  "type": "object",
+  "required": ["dock_id", "title", "dock_key", "entry_module", "doc"],
+  "properties": {
+    "dock_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+    },
+    "title": {
+      "type": "string"
+    },
+    "dock_key": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9_.-]*[a-z0-9])?\\.v[0-9]+$"
+    },
+    "entry_module": {
+      "type": "string"
+    },
+    "doc": {
+      "type": "string"
+    },
+    "area": {
+      "type": "string",
+      "enum": ["left", "right", "top", "bottom"],
+      "default": "right"
+    },
+    "debug_env": {
+      "type": "string"
+    },
+    "reload_prefixes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "description": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true
+    }
+  }
+}

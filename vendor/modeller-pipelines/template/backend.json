@@ -1,0 +1,32 @@
+{
+  "backend_id": "template",
+  "contract_version": "1.2",
+  "runner": {
+    "command": ["python", "runner/minirunner.py"],
+    "interpreter": "system-python",
+    "platform": ["any"]
+  },
+  "pipelines": [
+    {
+      "id": "trip-summary",
+      "definition": "pipelines/trip_summary/trip_summary.pipeline.yml"
+    }
+  ],
+  "smoke_pipeline": "trip-summary",
+  "docks": [
+    {
+      "dock_id": "demo_dock",
+      "title": "Demo Dock",
+      "dock_key": "template.demo.v1",
+      "entry_module": "docks/run_dock_template.py",
+      "doc": "docks/demo_dock/README.md",
+      "area": "right",
+      "debug_env": "DEMO_DOCK_DEBUG",
+      "reload_prefixes": ["docks.demo_dock", "docks.lib"],
+      "description": "Copyable demo QtDock illustrating the dock contract: browse bar, status bar, Info dialog, per-model persistence.",
+      "enabled": true
+    }
+  ],
+  "smoke_dock": "demo_dock",
+  "plugin": null
+}

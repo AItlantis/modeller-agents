@@ -1,0 +1,61 @@
+schema_version: "1.0"
+pipeline_id: trip-summary
+pipeline_name: Trip Summary
+version: "0.1.0"
+description: "Reads a CSV of synthetic trips, computes stats, optionally enriches with geo bounding box, exports a report."
+domain: "example"
+
+inputs:
+  required:
+    - trips_csv
+  optional:
+    - geo_enrichment
+
+outputs:
+  - summary_report
+  - manifest_json
+
+steps:
+  - id: 1
+    name: acquire_trips
+    title: "Acquire and validate trips from CSV"
+    action_module: pipelines.trip_summary.steps.acquire_trips
+    required: true
+    cache_inputs: [trips_csv]
+    params: {}
+
+  - id: 2
+    name: analyse_stats
+    title: "Analyse trip statistics"
+    action_module: pipelines.trip_summary.steps.analyse_stats
+    required: true
+    cache_inputs: [trips_csv]
+    params:
+      min_speed_kmh: 0
+      max_speed_kmh: 200
+
+  - id: 3
+    name: enrich_geo
+    title: "Enrich trips with geo bounding box (optional)"
+    action_module: pipelines.trip_summary.steps.enrich_geo
+    required: false
+    enabled: true
+    cache_inputs: [trips_csv, geo_enrichment]
+    params: {}
+
+  - id: 4
+    name: export_report
+    title: "Export HTML summary report and manifest entry"
+    action_module: pipelines.trip_summary.steps.export_report
+    required: true
+    cache_inputs: []
+    params:
+      report_format: html
+
+gates:
+  - step_id: 2
+    requires: [1]
+  - step_id: 3
+    requires: [1]
+  - step_id: 4
+    requires: [2]
