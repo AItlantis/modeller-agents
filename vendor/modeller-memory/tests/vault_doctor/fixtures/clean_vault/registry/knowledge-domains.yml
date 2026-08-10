@@ -1,0 +1,17 @@
+schema_version: 1
+registry_owner: modelling-knowledge
+status: draft
+routable: false
+
+domains:
+  sample:
+    title: Sample Domain
+    status: draft
+    routable: false
+    sensitivity_ceiling: public
+    aliases:
+      - sample-domain
+    index_note: null
+    allowed_note_types:
+      - explanation
+      - reference

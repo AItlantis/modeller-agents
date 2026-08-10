@@ -1,0 +1,4 @@
+interface:
+  display_name: "Document Knowledge Acquisition"
+  short_description: "Package documents into governed knowledge"
+  default_prompt: "Use $document-knowledge-acquisition to convert this document corpus into standardized evidence, traceability, graph exports, and discovery drafts."

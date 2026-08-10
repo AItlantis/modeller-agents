@@ -1,0 +1,10 @@
+schema_version: 0.1
+registry_owner: modelling-knowledge
+status: draft
+
+repositories:
+  demo:
+    name: demo
+    status: active
+    boundary_kind: product
+    write_policy: source_repo_only
