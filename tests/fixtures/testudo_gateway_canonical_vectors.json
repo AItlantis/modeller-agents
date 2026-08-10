@@ -1,0 +1,72 @@
+{
+  "contract": {
+    "version": "testudo-canonical-json-v1",
+    "envelope": "{\"version\":\"testudo-canonical-json-v1\",\"value\":<typed-value>}",
+    "typed_values": {
+      "null": "{\"type\":\"null\"}",
+      "bool": "{\"type\":\"bool\",\"value\":true}",
+      "int": "{\"type\":\"int\",\"value\":\"42\"}",
+      "float": "{\"type\":\"float\",\"value\":\"0.10000000000000001\"}",
+      "string": "{\"type\":\"string\",\"value\":\"text\"}",
+      "array": "{\"type\":\"array\",\"value\":[<typed-value>,<typed-value>]}",
+      "object": "{\"type\":\"object\",\"value\":{\"a\":<typed-value>,\"z\":<typed-value>}}"
+    },
+    "serialization": {
+      "ensure_ascii": false,
+      "sort_keys": true,
+      "separators": [",", ":"],
+      "encoding": "utf-8"
+    }
+  },
+  "vectors": [
+    {
+      "name": "null",
+      "input": null,
+      "envelope": {"version": "testudo-canonical-json-v1", "value": {"type": "null"}},
+      "canonical_json": "{\"value\":{\"type\":\"null\"},\"version\":\"testudo-canonical-json-v1\"}",
+      "digest": "sha256:8d00f57db51c11467798536c7ef76bef8804b6671db335402767817939ac7c77"
+    },
+    {
+      "name": "bool",
+      "input": true,
+      "envelope": {"version": "testudo-canonical-json-v1", "value": {"type": "bool", "value": true}},
+      "canonical_json": "{\"value\":{\"type\":\"bool\",\"value\":true},\"version\":\"testudo-canonical-json-v1\"}",
+      "digest": "sha256:e5d461fc40b15f5498cf4a591ba9fe956b6d5f8d57d10a03b9ebfd8a7e3ef2cb"
+    },
+    {
+      "name": "int",
+      "input": 42,
+      "envelope": {"version": "testudo-canonical-json-v1", "value": {"type": "int", "value": "42"}},
+      "canonical_json": "{\"value\":{\"type\":\"int\",\"value\":\"42\"},\"version\":\"testudo-canonical-json-v1\"}",
+      "digest": "sha256:ad9c2725029252988b40fbcda2f77857f030ce588174d5220c54b5922d619f68"
+    },
+    {
+      "name": "float",
+      "input": 0.1,
+      "envelope": {"version": "testudo-canonical-json-v1", "value": {"type": "float", "value": "0.10000000000000001"}},
+      "canonical_json": "{\"value\":{\"type\":\"float\",\"value\":\"0.10000000000000001\"},\"version\":\"testudo-canonical-json-v1\"}",
+      "digest": "sha256:b292629971a0064c347a326871a5146c16390170244c5501362c26ed2a0d4c61"
+    },
+    {
+      "name": "unicode-string",
+      "input": "caf\u00e9 / \u6771\u4eac",
+      "envelope": {"version": "testudo-canonical-json-v1", "value": {"type": "string", "value": "caf\u00e9 / \u6771\u4eac"}},
+      "canonical_json": "{\"value\":{\"type\":\"string\",\"value\":\"caf\u00e9 / \u6771\u4eac\"},\"version\":\"testudo-canonical-json-v1\"}",
+      "digest": "sha256:cbc3d930b7ca713c843b6d775b4bee14985230fe7430717513a0ef81cb883f19"
+    },
+    {
+      "name": "array",
+      "input": [null, false, 7, 2.5, "x"],
+      "envelope": {"version": "testudo-canonical-json-v1", "value": {"type": "array", "value": [{"type": "null"}, {"type": "bool", "value": false}, {"type": "int", "value": "7"}, {"type": "float", "value": "2.5"}, {"type": "string", "value": "x"}]}},
+      "canonical_json": "{\"value\":{\"type\":\"array\",\"value\":[{\"type\":\"null\"},{\"type\":\"bool\",\"value\":false},{\"type\":\"int\",\"value\":\"7\"},{\"type\":\"float\",\"value\":\"2.5\"},{\"type\":\"string\",\"value\":\"x\"}]},\"version\":\"testudo-canonical-json-v1\"}",
+      "digest": "sha256:b05a10a302cbcf29d5452c2080469f3da04188330745531dc756b7d5aa26073f"
+    },
+    {
+      "name": "object-sorted-and-nested",
+      "input": {"z": 1, "a": "\u00e9", "nested": {"b": true, "a": null}},
+      "envelope": {"version": "testudo-canonical-json-v1", "value": {"type": "object", "value": {"a": {"type": "string", "value": "\u00e9"}, "nested": {"type": "object", "value": {"a": {"type": "null"}, "b": {"type": "bool", "value": true}}}, "z": {"type": "int", "value": "1"}}}},
+      "canonical_json": "{\"value\":{\"type\":\"object\",\"value\":{\"a\":{\"type\":\"string\",\"value\":\"\u00e9\"},\"nested\":{\"type\":\"object\",\"value\":{\"a\":{\"type\":\"null\"},\"b\":{\"type\":\"bool\",\"value\":true}}},\"z\":{\"type\":\"int\",\"value\":\"1\"}}},\"version\":\"testudo-canonical-json-v1\"}",
+      "digest": "sha256:8f91b1fd088aa3b7644e82c0a8bb31dec41a0b20993aee2f4d0e867ce2cc5d6e"
+    }
+  ]
+}

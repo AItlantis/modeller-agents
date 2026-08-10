@@ -15,11 +15,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from modeller.contracts import IDENTITY_TOKEN_RE, validate_with_contract_schema
 from modeller.toml_compat import load_toml
@@ -28,11 +30,26 @@ from modeller.toml_compat import load_toml
 EXPECTED_PIPELINES_CONTRACT = "1.2"
 PINNED_PIPELINES_CONTRACT_SHA = "dbd00cb1299f3f68add0e5971e6ec808f010059d"
 CONTRACT_VERSION_FILE = Path("vendor/modeller-pipelines/contracts/VERSION")
-IDENTITY_FIELDS = ("task_id", "attempt_id", "mission_id", "correlation_id", "workflow_run_id")
+IDENTITY_FIELDS = (
+    "task_id",
+    "attempt_id",
+    "mission_id",
+    "correlation_id",
+    "workflow_run_id",
+    "principal_id",
+    "scope",
+    "scope_context",
+)
 REQUIRED_IDENTITY_FIELDS = ("mission_id", "task_id")
 REQUIRED_EXECUTION_IDENTITY_FIELDS = ("mission_id", "task_id", "attempt_id")
 PIPELINE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 RECEIPT_STATUSES = {"completed", "success", "partial", "failed", "cancelled", "recovery_required"}
+CANONICAL_JSON_VERSION = "testudo-canonical-json-v1"
+IDEMPOTENCY_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+APPROVED_PLAN_REF_FIELDS = ("approved_plan_ref", "approved_plan_reference", "plan_ref", "plan_reference")
+APPROVED_PLAN_DIGEST_FIELDS = ("approved_plan_digest", "plan_digest")
+BASELINE_REF_FIELDS = ("baseline_ref", "baseline_reference")
+BASELINE_DIGEST_FIELDS = ("baseline_digest",)
 
 
 class TestudoGatewayError(ValueError):
@@ -53,6 +70,45 @@ class IdempotencyConflictError(TestudoGatewayError):
 
 class TransportError(RuntimeError):
     """A retryable failure reported by an injected transport."""
+
+
+class CanonicalizationError(TestudoGatewayError):
+    """Raised when a value cannot be represented by Testudo's typed JSON contract."""
+
+
+@dataclass(frozen=True)
+class GatewayIdempotencyPolicy:
+    """UTC retention policy for terminal gateway idempotency records."""
+
+    retention_days: int = 30
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.retention_days, bool) or not isinstance(self.retention_days, int):
+            raise ValueError("retention_days must be an integer")
+        if not 0 <= self.retention_days <= 3650:
+            raise ValueError("retention_days must be between 0 and 3650")
+        if not callable(self.clock):
+            raise ValueError("clock must be callable")
+        observed = self.clock()
+        if not isinstance(observed, datetime) or observed.tzinfo is None or observed.utcoffset() is None:
+            raise ValueError("GatewayIdempotencyPolicy clock must return a UTC-aware datetime")
+
+    def utc_now(self) -> datetime:
+        """Return the injected clock value normalized to UTC, fail closed."""
+
+        observed = self.clock()
+        if not isinstance(observed, datetime) or observed.tzinfo is None or observed.utcoffset() is None:
+            raise ValueError("GatewayIdempotencyPolicy clock must return a UTC-aware datetime")
+        return observed.astimezone(timezone.utc)
+
+    def retention_until(self, terminal_completed_at: datetime | None = None) -> datetime:
+        """Calculate expiry from terminal completion in UTC."""
+
+        completed = terminal_completed_at or self.utc_now()
+        if completed.tzinfo is None or completed.utcoffset() is None:
+            raise ValueError("terminal completion must be UTC-aware")
+        return completed.astimezone(timezone.utc) + timedelta(days=self.retention_days)
 
 
 @dataclass(frozen=True)
@@ -151,6 +207,15 @@ class DryRunTransport:
         response.setdefault("contract_version", EXPECTED_PIPELINES_CONTRACT)
         response.setdefault("correlation_id", payload.get("correlation_id"))
         response.setdefault("identity", copy.deepcopy(dict(payload)))
+        response.setdefault("request_digest", _digest(operation, payload))
+        response.setdefault(
+            "response_identity",
+            {
+                "operation": operation,
+                "idempotency_key": idempotency_key,
+                "correlation_id": payload.get("correlation_id"),
+            },
+        )
         return response
 
 
@@ -163,6 +228,42 @@ InMemoryTestudoTransport = DryRunTransport
 class _StoredRequest:
     digest: str
     result: GatewayResult
+    terminal_completed_at: datetime
+    retention_until: datetime
+
+
+class InMemoryGatewayIdempotencyStore:
+    """Small durable-store seam; callers can share it across adapter instances."""
+
+    def __init__(self) -> None:
+        self.records: dict[str, _StoredRequest] = {}
+        self.fail_purge = False
+
+    def get(self, key: str) -> _StoredRequest | None:
+        """Return one immutable ledger row."""
+
+        return self.records.get(key)
+
+    def put(self, key: str, row: _StoredRequest) -> None:
+        """Persist one terminal ledger row."""
+
+        self.records[key] = row
+
+    def purge_expired(self, policy: GatewayIdempotencyPolicy) -> int:
+        """Delete eligible rows atomically and return the deleted-row count."""
+
+        before = dict(self.records)
+        try:
+            now = policy.utc_now()
+            expired = [key for key, row in self.records.items() if row.retention_until <= now]
+            for key in expired:
+                del self.records[key]
+            if self.fail_purge:
+                raise RuntimeError("injected purge failure")
+            return len(expired)
+        except Exception:
+            self.records = before
+            raise
 
 
 class TestudoGatewayAdapter:
@@ -177,13 +278,25 @@ class TestudoGatewayAdapter:
         *,
         expected_contract: str = EXPECTED_PIPELINES_CONTRACT,
         max_retries: int = 0,
+        policy: GatewayIdempotencyPolicy | None = None,
+        store: InMemoryGatewayIdempotencyStore | None = None,
+        idempotency_store: InMemoryGatewayIdempotencyStore | None = None,
     ) -> None:
         self.root = (root or Path(__file__).resolve().parents[3]).resolve()
         self.transport = transport or DryRunTransport()
         self.expected_contract = str(expected_contract)
         self.max_retries = max(0, int(max_retries))
-        self._requests: dict[str, _StoredRequest] = {}
+        if store is not None and idempotency_store is not None and store is not idempotency_store:
+            raise ValueError("store and idempotency_store must refer to the same seam")
+        self.policy = policy or GatewayIdempotencyPolicy()
+        self.store = store or idempotency_store or InMemoryGatewayIdempotencyStore()
+        self._requests = self.store.records
         self._identity_bindings: dict[str, dict[str, str]] = {}
+
+    def purge_expired(self) -> int:
+        """Purge terminal rows only after the caller's transaction succeeds."""
+
+        return self.store.purge_expired(self.policy)
 
     def validate_contract(self) -> ContractValidation:
         """Validate the local modeller-pipelines contract version and registry pin."""
@@ -319,6 +432,7 @@ class TestudoGatewayAdapter:
         return _derive_correlation(task_id)
 
     def _submit(
+        # pylint: disable=too-many-branches
         self,
         operation: str,
         payload: dict[str, Any],
@@ -337,6 +451,7 @@ class TestudoGatewayAdapter:
         errors = _validate_identity(payload, required_identity)
         if command:
             errors.extend(self._validate_command(payload))
+            errors.extend(_validate_execution_evidence(payload))
         if receipt:
             errors.extend(_validate_receipt(payload, self.expected_contract))
         if errors:
@@ -349,11 +464,17 @@ class TestudoGatewayAdapter:
         identity_errors = self._validate_identity_binding(payload, correlation)
         if identity_errors:
             return self._failure(operation, identity_errors, correlation)
-        key = str(idempotency_key or _digest(operation, payload))
+        try:
+            digest = _digest(operation, payload)
+            terminal_completed_at = self.policy.utc_now()
+        except (CanonicalizationError, ValueError) as exc:
+            return self._failure(operation, [str(exc)], correlation)
+        if idempotency_key is not None and not isinstance(idempotency_key, str):
+            return self._failure(operation, ["idempotency_key must be a safe identity token"], correlation)
+        key = idempotency_key or digest.split(":", 1)[1]
         if not IDENTITY_TOKEN_RE.fullmatch(key):
             return self._failure(operation, ["idempotency_key must be a safe identity token"], correlation)
-        digest = _digest(operation, payload)
-        stored = self._requests.get(key)
+        stored = self.store.get(key)
         if stored:
             if stored.digest != digest:
                 return self._failure(operation, [f"idempotency key {key!r} conflicts with a different payload"], correlation, key)
@@ -372,7 +493,15 @@ class TestudoGatewayAdapter:
 
         result = self._send_with_retry(operation, payload, key, correlation)
         if result.ok:
-            self._requests[key] = _StoredRequest(digest=digest, result=result)
+            self.store.put(
+                key,
+                _StoredRequest(
+                    digest=digest,
+                    result=result,
+                    terminal_completed_at=terminal_completed_at,
+                    retention_until=self.policy.retention_until(terminal_completed_at),
+                ),
+            )
             self._identity_bindings.setdefault(correlation, {}).update(_identity_projection(payload))
         return result
 
@@ -396,6 +525,7 @@ class TestudoGatewayAdapter:
                     payload,
                     self.expected_contract,
                     correlation,
+                    idempotency_key,
                 )
                 if response_errors:
                     last_error = "; ".join(response_errors)
@@ -524,15 +654,80 @@ def _validate_receipt(payload: Mapping[str, Any], expected_contract: str) -> lis
     return errors
 
 
-def _identity_projection(payload: Mapping[str, Any]) -> dict[str, str]:
-    return {key: str(payload[key]) for key in IDENTITY_FIELDS if key in payload and payload[key] is not None}
+def _validate_execution_evidence(payload: Mapping[str, Any]) -> list[str]:
+    """Require immutable plan/baseline evidence for execution only."""
+
+    errors: list[str] = []
+    errors.extend(
+        _validate_evidence_pair(
+            payload,
+            "approved-plan",
+            APPROVED_PLAN_REF_FIELDS,
+            APPROVED_PLAN_DIGEST_FIELDS,
+            ("approved_plan_evidence", "approved_plan"),
+        )
+    )
+    errors.extend(
+        _validate_evidence_pair(
+            payload,
+            "baseline",
+            BASELINE_REF_FIELDS,
+            BASELINE_DIGEST_FIELDS,
+            ("baseline_evidence", "baseline"),
+        )
+    )
+    return errors
+
+
+def _validate_evidence_pair(
+    payload: Mapping[str, Any],
+    label: str,
+    reference_fields: tuple[str, ...],
+    digest_fields: tuple[str, ...],
+    evidence_fields: tuple[str, ...],
+) -> list[str]:
+    errors: list[str] = []
+    reference = _first_present(payload, reference_fields)
+    digest = _first_present(payload, digest_fields)
+    if not isinstance(reference, str) or not reference:
+        errors.append(f"{label} evidence reference is required for execution")
+    if not isinstance(digest, str) or not IDEMPOTENCY_DIGEST_RE.fullmatch(digest):
+        errors.append(f"{label} evidence digest must be sha256:<hex>")
+    evidence = _first_present(payload, evidence_fields)
+    if not isinstance(evidence, Mapping):
+        return errors
+    evidence_task = evidence.get("task_id", evidence.get("task"))
+    if evidence_task is not None and evidence_task != payload.get("task_id"):
+        errors.append(f"{label} evidence belongs to a different task")
+    if evidence.get("stale") is True or evidence.get("status") in {"stale", "superseded", "expired"}:
+        errors.append(f"{label} evidence is stale")
+    observed_digest = evidence.get("digest", evidence.get("content_digest"))
+    if observed_digest is not None and observed_digest != digest:
+        errors.append(f"{label} evidence digest changed")
+    observed_reference = evidence.get("ref", evidence.get("reference"))
+    if observed_reference is not None and observed_reference != reference:
+        errors.append(f"{label} evidence reference changed")
+    return errors
+
+
+def _first_present(payload: Mapping[str, Any], fields: tuple[str, ...]) -> Any:
+    for field_name in fields:
+        if field_name in payload:
+            return payload[field_name]
+    return None
+
+
+def _identity_projection(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: payload[key] for key in IDENTITY_FIELDS if key in payload and payload[key] is not None}
 
 
 def _validate_transport_response(
+    # pylint: disable=too-many-branches
     response: Mapping[str, Any],
     request: Mapping[str, Any],
     expected_contract: str,
     correlation: str,
+    idempotency_key: str,
 ) -> list[str]:
     """Validate the minimum accepted-response contract before caching it."""
 
@@ -549,6 +744,22 @@ def _validate_transport_response(
             f"transport response correlation_id {response.get('correlation_id')!r} "
             f"does not match expected {correlation!r}"
         )
+    if response.get("operation") != request.get("operation"):
+        errors.append(
+            f"transport response operation {response.get('operation')!r} "
+            f"does not match expected {request.get('operation')!r}"
+        )
+    if response.get("idempotency_key") != idempotency_key:
+        errors.append(
+            f"transport response idempotency_key {response.get('idempotency_key')!r} "
+            f"does not match expected {idempotency_key!r}"
+        )
+    expected_digest = _digest(str(request.get("operation")), request)
+    if response.get("request_digest") != expected_digest:
+        errors.append(
+            f"transport response request_digest {response.get('request_digest')!r} "
+            f"does not match expected {expected_digest!r}"
+        )
 
     response_identity = response.get("identity")
     if not isinstance(response_identity, Mapping):
@@ -563,6 +774,22 @@ def _validate_transport_response(
                     f"transport response identity {field_name} {observed!r} "
                     f"does not match request {value!r}"
                 )
+    response_identity = response.get("response_identity")
+    if response_identity is not None:
+        if not isinstance(response_identity, Mapping):
+            errors.append("transport response response_identity must be an object")
+        else:
+            expected_response_identity = {
+                "operation": request.get("operation"),
+                "idempotency_key": idempotency_key,
+                "correlation_id": correlation,
+            }
+            for field_name, value in expected_response_identity.items():
+                if response_identity.get(field_name) != value:
+                    errors.append(
+                        f"transport response response_identity {field_name} "
+                        f"{response_identity.get(field_name)!r} does not match {value!r}"
+                    )
     return errors
 
 
@@ -570,9 +797,48 @@ def _derive_correlation(task_id: str) -> str:
     return f"task-correlation-{task_id}"
 
 
+def _canonical_typed_value(value: Any, path: str = "$") -> dict[str, Any]:
+    """Encode one value using Testudo's explicit typed canonical JSON contract."""
+
+    if value is None:
+        return {"type": "null"}
+    if isinstance(value, bool):
+        return {"type": "bool", "value": value}
+    if isinstance(value, int):
+        return {"type": "int", "value": str(value)}
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise CanonicalizationError(f"unsupported non-finite float at {path}")
+        return {"type": "float", "value": format(value, ".17g")}
+    if isinstance(value, str):
+        return {"type": "string", "value": value}
+    if isinstance(value, list):
+        return {"type": "array", "value": [_canonical_typed_value(item, f"{path}[{index}]") for index, item in enumerate(value)]}
+    if isinstance(value, Mapping):
+        typed: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise CanonicalizationError(f"unsupported non-string object key at {path}")
+            typed[key] = _canonical_typed_value(item, f"{path}.{key}")
+        return {"type": "object", "value": typed}
+    raise CanonicalizationError(f"unsupported identity-bearing value at {path}: {type(value).__name__}")
+
+
+def canonical_json(value: Any) -> str:
+    """Return the exact canonical JSON envelope shared with Testudo."""
+
+    envelope = {"version": CANONICAL_JSON_VERSION, "value": _canonical_typed_value(value)}
+    return json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_digest(value: Any) -> str:
+    """Return the Testudo-formatted canonical SHA-256 digest."""
+
+    return f"sha256:{hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()}"
+
+
 def _digest(operation: str, payload: Mapping[str, Any]) -> str:
-    canonical = json.dumps({"operation": operation, "payload": payload}, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return canonical_digest({"operation": operation, "payload": payload})
 
 
 def _send(transport: TestudoTransport | Any, operation: str, payload: Mapping[str, Any], idempotency_key: str) -> Mapping[str, Any]:
