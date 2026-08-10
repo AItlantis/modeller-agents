@@ -23,7 +23,7 @@ local_agents_stay_in_source = true
 
 [vendor]
 prefix = "vendor/modeller-pipelines"
-ref = "contract-v1.0"
+ref = "contract-v1.2"
 version_file = "contracts/VERSION"
 schemas_dir = "contracts/schemas"
 conformance_dir = "conformance"

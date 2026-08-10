@@ -12,7 +12,7 @@ writable = false
 [vendor.modeller-pipelines]
 status = "planned"
 remote = "git@github.com:AItlantis/modeller-pipelines.git"
-ref = "contract-v1.0"
+ref = "contract-v1.2"
 prefix = "vendor/modeller-pipelines"
 pinned = ""
 squash = true
