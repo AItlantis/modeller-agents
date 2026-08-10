@@ -1,0 +1,5 @@
+{
+  "title": "Broken Dock",
+  "entry_module": "docks/run_broken_dock.py",
+  "doc": "docks/broken_dock/README.md"
+}

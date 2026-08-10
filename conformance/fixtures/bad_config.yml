@@ -1,0 +1,6 @@
+# Deliberately invalid config — missing required inputs, bogus fields.
+# Used by test_failure_mode.py to verify the failure contract.
+pipeline_id: trip-summary
+bogus_field: this_should_not_exist
+params: {}
+# trips_csv is intentionally absent

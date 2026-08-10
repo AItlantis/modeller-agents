@@ -1,0 +1,36 @@
+{
+  "_comment": "Golden reference shape for a successful run result. All fields shown. Not a schema — see contracts/schemas/result.schema.json for the normative schema.",
+  "contract_version": "1.2",
+  "backend_id": "template",
+  "pipeline_id": "trip-summary",
+  "pipeline_version": "0.1.0",
+  "run_id": "uuid-or-timestamp-slug",
+  "status": "success",
+  "timestamps": {
+    "started_at": "2026-01-01T00:00:00+00:00",
+    "completed_at": "2026-01-01T00:00:05+00:00"
+  },
+  "config_path": "/absolute/path/to/config.yml",
+  "steps": [
+    {
+      "status": "success",
+      "step_id": 1,
+      "step_name": "acquire_trips",
+      "message": "Validated 200 trips from trips_sample.csv",
+      "duration_s": 0.012,
+      "cached": false,
+      "artifacts": [{"name": "trips_validated", "path": "trips_validated.csv"}],
+      "metrics": {"row_count": 200, "content_hash": "a1b2c3d4"},
+      "error": null
+    }
+  ],
+  "artifacts": [
+    {"name": "trips_validated", "path": "trips_validated.csv"},
+    {"name": "stats_json", "path": "stats.json"},
+    {"name": "summary_report", "path": "report.html"},
+    {"name": "manifest_json", "path": "manifest.json"}
+  ],
+  "metrics": {},
+  "logs": [],
+  "error": null
+}

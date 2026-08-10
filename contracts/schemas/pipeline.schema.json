@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/modeller-pipelines/contracts/1.2/pipeline.schema.json",
+  "title": "Modeller Pipeline Definition",
+  "type": "object",
+  "required": ["pipeline_id", "pipeline_name", "version", "description", "domain", "steps"],
+  "properties": {
+    "pipeline_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "pipeline_name": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "domain": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/input_entry"
+          }
+        },
+        "optional": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/input_entry"
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/output_entry"
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "title", "action_module"],
+        "properties": {
+          "id": {
+            "type": ["integer", "string"],
+            "pattern": "^[0-9]+[a-z]?$"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_]*$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "action_module": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "cache_inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "params": {
+            "type": "object"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["step_id"],
+        "properties": {
+          "step_id": {
+            "type": ["integer", "string"],
+            "pattern": "^[0-9]+[a-z]?$"
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": ["integer", "string"],
+              "pattern": "^[0-9]+[a-z]?$"
+            }
+          },
+          "condition": {
+            "type": "object",
+            "required": ["input", "equals"],
+            "properties": {
+              "input": {
+                "type": "string"
+              },
+              "equals": {
+                "type": ["boolean", "string", "number", "null"]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "input_entry": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "output_entry": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+

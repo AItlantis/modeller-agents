@@ -1,0 +1,6 @@
+# Minimal valid smoke config for the template backend's trip-summary pipeline.
+# trips_csv path is relative to the backend root (template/).
+pipeline_id: trip-summary
+inputs:
+  trips_csv: data/trips_sample.csv
+params: {}

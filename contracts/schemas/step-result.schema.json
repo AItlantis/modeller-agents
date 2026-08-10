@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/modeller-pipelines/contracts/1.2/step-result.schema.json",
+  "title": "Modeller Pipeline Step Result",
+  "type": "object",
+  "required": ["status", "step_id", "step_name"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "failed", "skipped"]
+    },
+    "step_id": {
+      "type": ["integer", "string"],
+      "pattern": "^[0-9]+[a-z]?$"
+    },
+    "step_name": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "duration_s": {
+      "type": "number"
+    },
+    "cached": {
+      "type": "boolean"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "result.schema.json#/$defs/artifact"
+      }
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "error": {
+      "type": ["object", "null"]
+    },
+    "skip_reason": {
+      "type": "string",
+      "enum": ["optional_input_absent", "gate_condition_unmet", "cache_upstream_skip"]
+    }
+  }
+}
+
