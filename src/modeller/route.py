@@ -5,11 +5,46 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .capabilities import CAPABILITY_SKILLS, canonical_skill_for_capability
+from .contracts import validate_active_context_envelope
 from .knowledge_packs import resolve_knowledge_selection
 from .reference_packs import validate_reference_pack
 from .runtime import runtime_path
 from .vcycle import check_v_cycle_current_stage, load_v_cycle_state
 from .workflow import check_current_step
+
+# ---------------------------------------------------------------------------
+# Envelope-purpose reconciliation (WI-03, Phase 1.5 Testudo Gateway mission).
+#
+# Two distinct shapes are both informally called "the envelope" in this
+# codebase and share one example filename (examples/testudo-context-envelope.json),
+# but they serve different purposes and are NOT merged into one flat shape:
+#
+#   1. The routing-instruction shape this module has always consumed:
+#      top-level `intent` (user_text/requested_capability/target_repository/...)
+#      and `execution_policy` (consent_required/max_risk_level/gate_policy/...).
+#      This is a modeller-agents-internal routing/dispatch concept with no
+#      counterpart in testudo-backend's documented contracts. It is generated
+#      internally by planning.draft_intent().to_envelope() for the common
+#      (orchestrator/planning) call path, and supplied externally via the CLI
+#      `route --envelope` fixture for the testudo-facing call path.
+#
+#   2. testudo-backend's ActiveContextEnvelope contract (schema_version,
+#      active_context_revision_id, project_id, principal_id, created_at,
+#      context_digest, ...) -- a context/permission snapshot, not a routing
+#      instruction. It has no target_repository, intent, or execution_policy
+#      fields at all (see contracts/active-context-envelope.schema.json).
+#
+# Reconciliation choice (option ii from the Phase 1.5 plan): route_payload's
+# accepted payload is a modeller-agents-internal envelope that MAY embed a
+# validated ActiveContextEnvelope as an optional sibling field named
+# `active_context`. When present, it is schema-validated up front (before
+# intent/policy extraction) via validate_active_context_envelope(); when
+# absent (the existing internal orchestrator/planning call path, which never
+# populates it), validation is skipped entirely and prior behavior is
+# unchanged. The two shapes are never merged into one flat object. This is
+# flagged in gap-analysis.md as a genuine envelope-purpose mismatch
+# discovered during WI-03 implementation, not silently absorbed.
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -60,6 +95,16 @@ def route_envelope(root: Path, envelope_path: Path, run_id: str | None = None) -
 
 
 def route_payload(root: Path, envelope: dict, run_id: str | None = None) -> RouteDecision:
+    active_context = envelope.get("active_context")
+    if active_context is not None:
+        context_check = validate_active_context_envelope(root, active_context)
+        if not context_check.ok:
+            decision = RouteDecision(target_repository="", skill="workflow", bundle=None)
+            decision.errors.extend(
+                f"active_context: {error}" for error in context_check.errors
+            )
+            return decision
+
     intent = envelope.get("intent", {})
     policy = envelope.get("execution_policy", {})
     target_repository = intent.get("target_repository") or ""

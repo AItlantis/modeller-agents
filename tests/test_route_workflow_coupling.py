@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 
 from modeller.cli import main
-from modeller.route import route_envelope
+from modeller.route import route_envelope, route_payload
 from modeller.vcycle import init_v_cycle_run
 from modeller.workflow import _validate_artifact, check_current_step, complete_artifact, init_workflow
 
@@ -319,6 +319,58 @@ class RouteWorkflowCouplingTests(unittest.TestCase):
             gate = check_current_step(root, "run-provenance-ok")
             self.assertTrue(gate.ok, gate.errors)
 
+    def test_route_example_envelope_with_valid_active_context_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["review"])
+            _copy_active_context_envelope_schema(root)
+            envelope = _write_envelope(
+                root,
+                "review",
+                active_context=_valid_active_context(),
+            )
+
+            decision = route_envelope(root, envelope)
+
+            self.assertTrue(decision.ok, decision.errors)
+            self.assertEqual(decision.skill, "review")
+
+    def test_route_rejects_active_context_missing_required_field(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["review"])
+            _copy_active_context_envelope_schema(root)
+            active_context = _valid_active_context()
+            del active_context["context_digest"]
+            envelope = _write_envelope(
+                root,
+                "review",
+                active_context=active_context,
+            )
+
+            decision = route_envelope(root, envelope)
+
+            self.assertFalse(decision.ok)
+            self.assertTrue(
+                any("context_digest" in error for error in decision.errors),
+                decision.errors,
+            )
+
+    def test_route_payload_without_active_context_is_unaffected(self) -> None:
+        # The internal orchestrator/planning call path never populates
+        # `active_context`; absence must not change existing behavior.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_minimal_workflow_root(Path(tmp))
+            _write_bundle_and_pack(root, skills=["review"])
+            envelope = {
+                "intent": {"target_repository": "demo", "requested_capability": "review"},
+                "execution_policy": {"consent_required": True, "max_risk_level": "low"},
+            }
+
+            decision = route_payload(root, envelope)
+
+            self.assertTrue(decision.ok, decision.errors)
+
     def test_validate_artifact_directly_flags_missing_provenance(self) -> None:
         workflow = json.loads(
             (ROOT / "method/workflows/modeller-agents-build.workflow.json").read_text(encoding="utf-8")
@@ -451,6 +503,7 @@ def _write_envelope(
     run_id: str | None = None,
     intent_extra: dict | None = None,
     policy_extra: dict | None = None,
+    active_context: dict | None = None,
 ) -> Path:
     envelope = root / "envelope.json"
     execution_policy: dict = {"consent_required": True, "max_risk_level": "low"}
@@ -461,16 +514,33 @@ def _write_envelope(
     intent = {"target_repository": "demo", "requested_capability": requested_capability}
     if intent_extra:
         intent.update(intent_extra)
-    envelope.write_text(
-        json.dumps(
-            {
-                "intent": intent,
-                "execution_policy": execution_policy,
-            }
-        ),
+    payload: dict = {
+        "intent": intent,
+        "execution_policy": execution_policy,
+    }
+    if active_context is not None:
+        payload["active_context"] = active_context
+    envelope.write_text(json.dumps(payload), encoding="utf-8")
+    return envelope
+
+
+def _copy_active_context_envelope_schema(root: Path) -> None:
+    (root / "schemas").mkdir(parents=True, exist_ok=True)
+    (root / "schemas" / "active-context-envelope.schema.json").write_text(
+        (ROOT / "schemas" / "active-context-envelope.schema.json").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    return envelope
+
+
+def _valid_active_context() -> dict:
+    return {
+        "schema_version": "0.1",
+        "active_context_revision_id": "acr-test-0001",
+        "project_id": "test-project",
+        "principal_id": "user-test-001",
+        "created_at": "2026-08-09T00:00:00Z",
+        "context_digest": "sha256:" + "a" * 64,
+    }
 
 
 if __name__ == "__main__":

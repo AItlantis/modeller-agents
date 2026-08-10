@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/runtime-receipt.schema.json",
+  "title": "Runtime Receipt",
+  "description": "modeller-agents-owned OUTBOUND contract for a partial/terminal execution receipt, authored to match testudo-backend's DRAFT, non-final contracts/runtime-receipt.schema.json (marked a design fixture, not a final generated API schema, per testudo-backend/12-api-event-and-schema-catalog.md section 8). modeller-agents is named Producer of RuntimeReceipt in that document's section 7 contract-catalog table. This schema mirrors, but does not copy verbatim, the testudo-backend draft's required-field set. LIMITATION: if the parallel testudo-backend mission changes the real RuntimeReceipt shape before this schema is consumed, this file must be RE-VERSIONED (schema_version bump), not silently reinterpreted to match the new shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-additional-properties-rationale": "Unlike mission-identity.schema.json / checkpoint-receipt.schema.json (additionalProperties:true, pre-existing defensive/extensible internal records), this schema defines modeller-agents' own outbound wire shape authored specifically to match a real, named external consumer (testudo-backend Gateway/Task) -- so unexpected fields are a producer-side contract bug, not forward-compatible extension, and additionalProperties:false is deliberate here.",
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "task_id",
+    "mission_id",
+    "pipeline_execution_id",
+    "status",
+    "created_at",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "receipt_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "task_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "mission_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "pipeline_execution_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+      "description": "Opaque, pattern-constrained correlation-ID token binding this receipt to a testudo-backend pipeline execution. modeller-agents does not own or interpret its internal structure -- same style as mission_id/task_id in schemas/mission-identity.schema.json (Q1 disposition: opaque correlation field, not schema ownership)."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["partial", "completed", "failed", "cancelled", "recovery_required"]
+    },
+    "stage_status": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "outputs": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "error": { "type": ["object", "null"] },
+    "created_at": { "type": "string", "minLength": 1 }
+  }
+}

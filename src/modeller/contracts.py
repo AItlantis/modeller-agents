@@ -15,6 +15,10 @@ CURRENT_CHECKPOINT_RECEIPT_SCHEMA_VERSION = 1
 VERIFICATION_STATUSES = {"verified", "stale", "incompatible", "malformed", "missing"}
 AUTHORIZATION_DECISIONS = {"approved", "approved-with-reservations", "changes-requested", "rejected"}
 CURRENT_CAPABILITY_GRANT_SCHEMA_VERSION = 1
+CURRENT_RUNTIME_EVENT_SCHEMA_VERSION = 1
+CURRENT_RUNTIME_RECEIPT_SCHEMA_VERSION = 1
+RUNTIME_RECEIPT_STATUSES = {"partial", "completed", "failed", "cancelled", "recovery_required"}
+CONTEXT_DIGEST_RE = re.compile(r"^[A-Za-z0-9_-]+:[A-Fa-f0-9]+$")
 
 
 @dataclass
@@ -156,6 +160,29 @@ def _type_matches(value, expected) -> bool:
 # They are plain dataclasses validated against modeller-agents' own
 # schemas/mission-identity.schema.json and schemas/checkpoint-receipt.schema.json
 # and never import or embed any pipeline-owned schema body.
+#
+# RuntimeEvent and RuntimeReceipt (below) follow this same precedent: plain
+# dataclasses validated against modeller-agents' own
+# schemas/runtime-event.schema.json and schemas/runtime-receipt.schema.json.
+# They are modeller-agents' own OUTBOUND contracts, authored to match a real
+# external consumer (testudo-backend Gateway/Task projection, per
+# 12-api-event-and-schema-catalog.md section 7) rather than importing or
+# embedding that consumer's schema body. Both carry pipeline_execution_id as
+# a plain, opaque, pattern-constrained correlation-ID field -- the same
+# IDENTITY_TOKEN_RE style already used for mission_id/task_id -- per the Q1
+# ruling in the Phase 1.5 Testudo Gateway mission: an opaque correlation
+# token, not pipeline-schema-body ownership.
+#
+# validate_active_context_envelope() (WI-03) follows this same precedent for
+# an INBOUND contract: a plain function validating a payload dict against
+# modeller-agents' own schemas/active-context-envelope.schema.json (a local
+# copy mirroring testudo-backend's draft contracts/active-context-envelope.schema.json),
+# using the same own_schema_dir/_own_schema/_validate_schema_value machinery
+# as validate_mission_identity/validate_checkpoint_receipt/validate_runtime_event/
+# validate_runtime_receipt above. It is a context/permission-snapshot contract,
+# purpose-distinct from route.py's pre-existing intent/execution_policy routing
+# shape -- see route.py's module-level "Envelope-purpose reconciliation" comment
+# for how the two are kept separate rather than merged.
 # ---------------------------------------------------------------------------
 
 
@@ -412,6 +439,223 @@ def validate_checkpoint_receipt(
 
     if errors and not remediation:
         remediation.append("supply a complete, current-schema checkpoint receipt before proceeding")
+
+    return IdentityValidation(ok=not errors, errors=errors, warnings=warnings, remediation=remediation)
+
+
+@dataclass
+class RuntimeEvent:
+    """A single outbound runtime progress/evidence event (modeller-agents-owned)."""
+
+    runtime_event_id: str
+    event_type: str
+    task_id: str
+    mission_id: str
+    pipeline_execution_id: str
+    sequence: int
+    occurred_at: str
+    payload: dict
+    schema_version: int = CURRENT_RUNTIME_EVENT_SCHEMA_VERSION
+    dispatch_attempt_id: str | None = None
+    correlation_id: str | None = None
+    evidence_refs: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        payload = {
+            "schema_version": self.schema_version,
+            "runtime_event_id": self.runtime_event_id,
+            "event_type": self.event_type,
+            "task_id": self.task_id,
+            "mission_id": self.mission_id,
+            "pipeline_execution_id": self.pipeline_execution_id,
+            "dispatch_attempt_id": self.dispatch_attempt_id,
+            "sequence": self.sequence,
+            "occurred_at": self.occurred_at,
+            "payload": self.payload,
+            "evidence_refs": list(self.evidence_refs),
+        }
+        if self.correlation_id is not None:
+            payload["correlation_id"] = self.correlation_id
+        return payload
+
+
+@dataclass
+class RuntimeReceipt:
+    """A partial/terminal execution receipt (modeller-agents-owned)."""
+
+    receipt_id: str
+    task_id: str
+    mission_id: str
+    pipeline_execution_id: str
+    status: str
+    created_at: str
+    evidence: list[str]
+    schema_version: int = CURRENT_RUNTIME_RECEIPT_SCHEMA_VERSION
+    stage_status: list[dict] = field(default_factory=list)
+    outputs: list[dict] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    error: dict | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "receipt_id": self.receipt_id,
+            "task_id": self.task_id,
+            "mission_id": self.mission_id,
+            "pipeline_execution_id": self.pipeline_execution_id,
+            "status": self.status,
+            "stage_status": list(self.stage_status),
+            "outputs": list(self.outputs),
+            "limitations": list(self.limitations),
+            "evidence": list(self.evidence),
+            "error": self.error,
+            "created_at": self.created_at,
+        }
+
+
+def validate_runtime_event(root: Path, payload: dict) -> IdentityValidation:
+    """Validate an outbound RuntimeEvent; reject missing, stale, or malformed shapes.
+
+    Built against testudo-backend's DRAFT contracts/runtime-event.schema.json (a
+    design fixture, not final, per 12-api-event-and-schema-catalog.md section 8).
+    """
+
+    if not isinstance(payload, dict):
+        return IdentityValidation(
+            ok=False,
+            errors=["runtime event payload must be a JSON object"],
+            remediation=["produce a RuntimeEvent.to_dict() payload before validating"],
+        )
+    schema, schema_errors = _own_schema(root, "runtime-event.schema.json")
+    if schema is None:
+        return IdentityValidation(
+            ok=False,
+            errors=schema_errors,
+            remediation=["ensure schemas/runtime-event.schema.json exists under this repository"],
+        )
+    validation = SchemaValidation(schema_path=own_schema_dir(root) / "runtime-event.schema.json")
+    _validate_schema_value(payload, schema, "$", validation, own_schema_dir(root))
+    errors = list(validation.errors)
+    remediation: list[str] = []
+    warnings: list[str] = list(validation.warnings)
+
+    observed_version = payload.get("schema_version")
+    if observed_version is not None and observed_version != CURRENT_RUNTIME_EVENT_SCHEMA_VERSION:
+        errors.append(
+            f"$.schema_version {observed_version!r} is incompatible with expected "
+            f"{CURRENT_RUNTIME_EVENT_SCHEMA_VERSION!r}"
+        )
+        remediation.append(
+            "regenerate the runtime event with the current schema_version "
+            f"({CURRENT_RUNTIME_EVENT_SCHEMA_VERSION})"
+        )
+
+    for key in ("runtime_event_id", "task_id", "mission_id", "pipeline_execution_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and not IDENTITY_TOKEN_RE.fullmatch(value):
+            errors.append(f"$.{key} must be a safe identity token")
+            remediation.append(f"rename {key} to letters, numbers, dot, underscore, or dash only")
+        elif key not in payload:
+            remediation.append(f"supply {key} (an opaque correlation-ID token) before re-submitting")
+
+    if errors and not remediation:
+        remediation.append("supply a complete, current-schema runtime event before proceeding")
+
+    return IdentityValidation(ok=not errors, errors=errors, warnings=warnings, remediation=remediation)
+
+
+def validate_runtime_receipt(root: Path, payload: dict) -> IdentityValidation:
+    """Validate an outbound RuntimeReceipt; reject missing, stale, or malformed shapes.
+
+    Built against testudo-backend's DRAFT contracts/runtime-receipt.schema.json (a
+    design fixture, not final, per 12-api-event-and-schema-catalog.md section 8).
+    """
+
+    if not isinstance(payload, dict):
+        return IdentityValidation(
+            ok=False,
+            errors=["runtime receipt payload must be a JSON object"],
+            remediation=["produce a RuntimeReceipt.to_dict() payload before validating"],
+        )
+    schema, schema_errors = _own_schema(root, "runtime-receipt.schema.json")
+    if schema is None:
+        return IdentityValidation(
+            ok=False,
+            errors=schema_errors,
+            remediation=["ensure schemas/runtime-receipt.schema.json exists under this repository"],
+        )
+    validation = SchemaValidation(schema_path=own_schema_dir(root) / "runtime-receipt.schema.json")
+    _validate_schema_value(payload, schema, "$", validation, own_schema_dir(root))
+    errors = list(validation.errors)
+    remediation: list[str] = []
+    warnings: list[str] = list(validation.warnings)
+
+    observed_version = payload.get("schema_version")
+    if observed_version is not None and observed_version != CURRENT_RUNTIME_RECEIPT_SCHEMA_VERSION:
+        errors.append(
+            f"$.schema_version {observed_version!r} is incompatible with expected "
+            f"{CURRENT_RUNTIME_RECEIPT_SCHEMA_VERSION!r}"
+        )
+        remediation.append(
+            "regenerate the runtime receipt with the current schema_version "
+            f"({CURRENT_RUNTIME_RECEIPT_SCHEMA_VERSION})"
+        )
+
+    for key in ("receipt_id", "task_id", "mission_id", "pipeline_execution_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and not IDENTITY_TOKEN_RE.fullmatch(value):
+            errors.append(f"$.{key} must be a safe identity token")
+            remediation.append(f"rename {key} to letters, numbers, dot, underscore, or dash only")
+        elif key not in payload:
+            remediation.append(f"supply {key} (an opaque correlation-ID token) before re-submitting")
+
+    status = payload.get("status")
+    if status is not None and status not in RUNTIME_RECEIPT_STATUSES:
+        errors.append(f"$.status must be one of {sorted(RUNTIME_RECEIPT_STATUSES)}")
+        remediation.append("re-run runtime execution and record a recognised status")
+
+    if errors and not remediation:
+        remediation.append("supply a complete, current-schema runtime receipt before proceeding")
+
+    return IdentityValidation(ok=not errors, errors=errors, warnings=warnings, remediation=remediation)
+
+
+def validate_active_context_envelope(root: Path, payload: dict) -> IdentityValidation:
+    """Validate an inbound ActiveContextEnvelope; reject missing, stale, or malformed shapes.
+
+    Built against testudo-backend's DRAFT contracts/active-context-envelope.schema.json (a
+    design fixture, not final, per 12-api-event-and-schema-catalog.md section 8). This is a
+    context/permission-snapshot contract, purpose-distinct from route.py's pre-existing
+    intent/execution_policy routing shape (see route.py's "Envelope-purpose reconciliation"
+    module comment).
+    """
+
+    if not isinstance(payload, dict):
+        return IdentityValidation(
+            ok=False,
+            errors=["active context envelope payload must be a JSON object"],
+            remediation=["produce an ActiveContextEnvelope-shaped payload before validating"],
+        )
+    schema, schema_errors = _own_schema(root, "active-context-envelope.schema.json")
+    if schema is None:
+        return IdentityValidation(
+            ok=False,
+            errors=schema_errors,
+            remediation=["ensure schemas/active-context-envelope.schema.json exists under this repository"],
+        )
+    validation = SchemaValidation(schema_path=own_schema_dir(root) / "active-context-envelope.schema.json")
+    _validate_schema_value(payload, schema, "$", validation, own_schema_dir(root))
+    errors = list(validation.errors)
+    remediation: list[str] = []
+    warnings: list[str] = list(validation.warnings)
+
+    digest = payload.get("context_digest")
+    if isinstance(digest, str) and not CONTEXT_DIGEST_RE.fullmatch(digest):
+        errors.append("$.context_digest must match <algorithm>:<hex-digest> (e.g. sha256:<hex>)")
+        remediation.append("recompute context_digest from the active context snapshot before re-submitting")
+
+    if errors and not remediation:
+        remediation.append("supply a complete, current-schema active context envelope before proceeding")
 
     return IdentityValidation(ok=not errors, errors=errors, warnings=warnings, remediation=remediation)
 

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/runtime-event.schema.json",
+  "title": "Runtime Event",
+  "description": "modeller-agents-owned OUTBOUND contract for a single runtime progress/evidence event, authored to match testudo-backend's DRAFT, non-final contracts/runtime-event.schema.json (marked a design fixture, not a final generated API schema, per testudo-backend/12-api-event-and-schema-catalog.md section 8). modeller-agents is named Producer of RuntimeEvent in that document's section 7 contract-catalog table. This schema mirrors, but does not copy verbatim, the testudo-backend draft's required-field set. LIMITATION: if the parallel testudo-backend mission changes the real RuntimeEvent shape before this schema is consumed, this file must be RE-VERSIONED (schema_version bump), not silently reinterpreted to match the new shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-additional-properties-rationale": "Unlike mission-identity.schema.json / checkpoint-receipt.schema.json (additionalProperties:true, pre-existing defensive/extensible internal records), this schema defines modeller-agents' own outbound wire shape authored specifically to match a real, named external consumer (testudo-backend Gateway/Task projection) -- so unexpected fields are a producer-side contract bug, not forward-compatible extension, and additionalProperties:false is deliberate here.",
+  "required": [
+    "schema_version",
+    "runtime_event_id",
+    "event_type",
+    "task_id",
+    "mission_id",
+    "pipeline_execution_id",
+    "sequence",
+    "occurred_at",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "runtime_event_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "event_type": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "mission_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "pipeline_execution_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+      "description": "Opaque, pattern-constrained correlation-ID token binding this event to a testudo-backend pipeline execution. modeller-agents does not own or interpret its internal structure -- same style as mission_id/task_id in schemas/mission-identity.schema.json (Q1 disposition: opaque correlation field, not schema ownership)."
+    },
+    "dispatch_attempt_id": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "occurred_at": { "type": "string", "minLength": 1 },
+    "correlation_id": { "type": "string", "minLength": 1 },
+    "payload": { "type": "object" },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

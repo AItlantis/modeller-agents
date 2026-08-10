@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aitlantis.dev/schemas/active-context-envelope.schema.json",
+  "title": "Active Context Envelope",
+  "description": "modeller-agents-local copy of the ActiveContextEnvelope shape, authored to mirror testudo-backend's DRAFT, non-final contracts/active-context-envelope.schema.json (marked a design fixture, not a final generated API schema, per testudo-backend/12-api-event-and-schema-catalog.md section 8). This is a context/permission snapshot contract -- distinct in purpose from route.py's pre-existing intent/execution_policy routing-instruction shape (see route.py module docstring and gap-analysis.md section 'WI-03 envelope-purpose mismatch' for the reconciliation). LIMITATION: if the parallel testudo-backend mission changes the real ActiveContextEnvelope shape before this schema is consumed, this file must be RE-VERSIONED (schema_version bump), not silently reinterpreted to match the new shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-additional-properties-rationale": "Unlike mission-identity.schema.json / checkpoint-receipt.schema.json (additionalProperties:true, pre-existing defensive/extensible internal records), this schema mirrors a real, named external producer contract (testudo-backend's ActiveContextEnvelope) -- so unexpected fields are a consumer-side contract-drift signal, not forward-compatible extension, and additionalProperties:false is deliberate here, matching WI-02's precedent on runtime-event/runtime-receipt. NOTE: the shared _validate_schema_value engine (contracts.py) does not currently enforce additionalProperties -- this posture documents the intended contract shape; it is not yet mechanically enforced (see contracts.py module comment and WI-02 handoff for this known limitation).",
+  "required": [
+    "schema_version",
+    "active_context_revision_id",
+    "project_id",
+    "principal_id",
+    "created_at",
+    "context_digest"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "active_context_revision_id": { "type": "string", "minLength": 1 },
+    "project_id": { "type": "string", "minLength": 1 },
+    "principal_id": { "type": "string", "minLength": 1 },
+    "model_id": { "type": ["string", "null"] },
+    "model_version_id": { "type": ["string", "null"] },
+    "scenario_id": { "type": ["string", "null"] },
+    "period_id": { "type": ["string", "null"] },
+    "simulation_run_id": { "type": ["string", "null"] },
+    "saved_view_revision_id": { "type": ["string", "null"] },
+    "selection": { "type": "object" },
+    "permission_snapshot_id": { "type": "string", "minLength": 1 },
+    "revision": { "type": "integer", "minimum": 1 },
+    "created_at": { "type": "string" },
+    "expires_at": { "type": ["string", "null"] },
+    "context_digest": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+:[A-Fa-f0-9]+$"
+    },
+    "signature": { "type": ["string", "null"] }
+  }
+}
