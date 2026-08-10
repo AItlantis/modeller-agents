@@ -24,6 +24,7 @@ local_agents_stay_in_source = true
 [vendor]
 prefix = "vendor/modeller-pipelines"
 ref = "contract-v1.2"
+pinned = "dbd00cb1299f3f68add0e5971e6ec808f010059d"
 version_file = "contracts/VERSION"
 schemas_dir = "contracts/schemas"
 conformance_dir = "conformance"
@@ -43,6 +44,12 @@ partial_definition = "all required steps passed; at least one optional step fail
 [contract_lock]
 format = "modeller-pipelines contract-v<version> <sha>"
 location = "backend repo root"
+approved_release = "modeller-pipelines contract-v1.2 dbd00cb1299f3f68add0e5971e6ec808f010059d"
+
+[schema_resolution]
+status = "blocked"
+required_source = "vendor/modeller-pipelines/contracts/schemas"
+blocker = "The pinned release is recorded, but vendor/modeller-pipelines is not populated. Sibling-checkout fallback remains enabled for development and remains a strict-readiness blocker until a governed vendor sync resolves the pinned source."
 
 [invariants]
 minirunner_max_lines = 200

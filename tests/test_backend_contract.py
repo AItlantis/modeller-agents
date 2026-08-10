@@ -18,7 +18,7 @@ class BackendContractTests(unittest.TestCase):
             result = check_backend(root, "aimsun-psp")
 
             self.assertFalse(result.ok)
-            self.assertIn("contract_version '0.1' does not match expected '1.0'", result.errors)
+            self.assertIn("contract_version '0.1' does not match expected '1.2'", result.errors)
 
     def test_run_rejects_unexpected_contract_before_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -39,11 +39,11 @@ class BackendContractTests(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertIsNone(result.returncode)
             self.assertEqual(result.command, [])
-            self.assertIn("contract_version '0.1' does not match expected '1.0'", result.errors)
+            self.assertIn("contract_version '0.1' does not match expected '1.2'", result.errors)
 
     def test_run_rejects_result_identity_mismatch_after_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root, backend_root = _write_backend_fixture(Path(tmp), contract_version="1.0")
+            root, backend_root = _write_backend_fixture(Path(tmp), contract_version="1.2")
             runner = backend_root / "runner.py"
             runner.write_text(
                 "\n".join(
@@ -55,7 +55,7 @@ class BackendContractTests(unittest.TestCase):
                         "run_dir.mkdir(parents=True, exist_ok=True)",
                         "result = run_dir / 'result.json'",
                         "result.write_text(json.dumps({",
-                        "  'contract_version': '1.0',",
+                        "  'contract_version': '1.2',",
                         "  'backend_id': 'aimsun-psp',",
                         "  'pipeline_id': 'wrong-pipeline',",
                         "  'pipeline_version': '0.1',",
@@ -71,7 +71,7 @@ class BackendContractTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            _write_backend_manifest(backend_root, contract_version="1.0", command=[sys.executable, "runner.py"])
+            _write_backend_manifest(backend_root, contract_version="1.2", command=[sys.executable, "runner.py"])
             config = backend_root / "config.yml"
             config.write_text("{}", encoding="utf-8")
 
@@ -105,7 +105,7 @@ def _write_backend_fixture(tmp: Path, contract_version: str) -> tuple[Path, Path
                 "required = false",
                 'backend_id = "aimsun-psp"',
                 'contract_family = "modeller-pipelines"',
-                'expected_contract = "1.0"',
+                'expected_contract = "1.2"',
                 'local_root_key = "aimsun-psp"',
             ]
         ),

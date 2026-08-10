@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import tomllib
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -31,6 +32,31 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DoctorCliTests(unittest.TestCase):
+    def test_contract_v12_pin_surfaces_and_backend_activation_guard(self) -> None:
+        expected_sha = "dbd00cb1299f3f68add0e5971e6ec808f010059d"
+        backends = tomllib.loads((ROOT / "backends.toml").read_text(encoding="utf-8"))
+        vendors = tomllib.loads((ROOT / "vendors.toml").read_text(encoding="utf-8"))
+        reference_pack = tomllib.loads(
+            (ROOT / "reference-packs/modeller-pipelines.toml").read_text(encoding="utf-8")
+        )
+
+        backend = backends["backend"]["aimsun-psp"]
+        self.assertEqual(backend["expected_contract"], "1.2")
+        self.assertEqual(backend["contract_ref"], "contract-v1.2")
+        self.assertEqual(backend["contract_sha"], expected_sha)
+        self.assertEqual(backend["status"], "planned")
+
+        vendor = vendors["vendor"]["modeller-pipelines"]
+        self.assertEqual(vendor["ref"], "contract-v1.2")
+        self.assertEqual(vendor["pinned"], expected_sha)
+        self.assertEqual(vendor["status"], "planned")
+
+        pack_vendor = reference_pack["vendor"]
+        self.assertEqual(pack_vendor["ref"], "contract-v1.2")
+        self.assertEqual(pack_vendor["pinned"], expected_sha)
+        self.assertEqual(reference_pack["status"], "draft")
+        self.assertEqual(reference_pack["schema_resolution"]["status"], "blocked")
+
     def test_doctor_warns_about_deactivated_domain_on_current_repo(self) -> None:
         # F-A: domain routability is intentionally disabled in the vault and
         # mirrored locally as draft/routable:false. Normal doctor should accept
@@ -226,7 +252,7 @@ class DoctorCliTests(unittest.TestCase):
             result_json.write_text(
                 json.dumps(
                     {
-                        "contract_version": "1.0",
+                        "contract_version": "1.2",
                         "backend_id": "template",
                         "pipeline_id": "smoke",
                         "pipeline_version": "0.1",
@@ -253,7 +279,7 @@ class DoctorCliTests(unittest.TestCase):
             result_json.write_text(
                 json.dumps(
                     {
-                        "contract_version": "1.0",
+                        "contract_version": "1.2",
                         "backend_id": "template",
                         "pipeline_id": "smoke",
                         "pipeline_version": "0.1",
@@ -280,7 +306,7 @@ class DoctorCliTests(unittest.TestCase):
             result_json.write_text(
                 json.dumps(
                     {
-                        "contract_version": "1.0",
+                        "contract_version": "1.2",
                         "backend_id": "template",
                         "pipeline_id": "smoke",
                         "pipeline_version": "0.1",
@@ -309,7 +335,7 @@ class DoctorCliTests(unittest.TestCase):
                 json.dumps(
                     {
                         "backend_id": "bad backend id",
-                        "contract_version": "1.0",
+                        "contract_version": "1.2",
                         "runner": {"command": [], "interpreter": "system-python", "platform": []},
                         "pipelines": [],
                     }
@@ -506,7 +532,7 @@ class DoctorCliTests(unittest.TestCase):
                         "run_dir.mkdir(parents=True, exist_ok=True)",
                         "result = run_dir / 'result.json'",
                         "result.write_text(json.dumps({",
-                        "  'contract_version': '1.0',",
+                        "  'contract_version': '1.2',",
                         "  'backend_id': 'aimsun-psp',",
                         "  'pipeline_id': 'smoke',",
                         "  'pipeline_version': '0.1',",
@@ -526,7 +552,7 @@ class DoctorCliTests(unittest.TestCase):
                 json.dumps(
                     {
                         "backend_id": "aimsun-psp",
-                        "contract_version": "1.0",
+                        "contract_version": "1.2",
                         "runner": {
                             "command": [sys.executable, "runner.py"],
                             "interpreter": "system-python",
