@@ -30,6 +30,7 @@ PINNED_PIPELINES_CONTRACT_SHA = "dbd00cb1299f3f68add0e5971e6ec808f010059d"
 CONTRACT_VERSION_FILE = Path("vendor/modeller-pipelines/contracts/VERSION")
 IDENTITY_FIELDS = ("task_id", "attempt_id", "mission_id", "correlation_id", "workflow_run_id")
 REQUIRED_IDENTITY_FIELDS = ("mission_id", "task_id")
+REQUIRED_EXECUTION_IDENTITY_FIELDS = ("mission_id", "task_id", "attempt_id")
 PIPELINE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 RECEIPT_STATUSES = {"completed", "success", "partial", "failed", "cancelled", "recovery_required"}
 
@@ -147,6 +148,8 @@ class DryRunTransport:
         response.setdefault("dry_run", True)
         response.setdefault("operation", operation)
         response.setdefault("idempotency_key", idempotency_key)
+        response.setdefault("contract_version", EXPECTED_PIPELINES_CONTRACT)
+        response.setdefault("correlation_id", payload.get("correlation_id"))
         response.setdefault("identity", copy.deepcopy(dict(payload)))
         return response
 
@@ -180,7 +183,7 @@ class TestudoGatewayAdapter:
         self.expected_contract = str(expected_contract)
         self.max_retries = max(0, int(max_retries))
         self._requests: dict[str, _StoredRequest] = {}
-        self._identity_correlations: dict[tuple[str, str], str] = {}
+        self._identity_bindings: dict[str, dict[str, str]] = {}
 
     def validate_contract(self) -> ContractValidation:
         """Validate the local modeller-pipelines contract version and registry pin."""
@@ -280,7 +283,13 @@ class TestudoGatewayAdapter:
         if error:
             return self._failure("dispatch_command", error)
         payload["operation"] = "dispatch_command"
-        return self._submit("dispatch_command", payload, idempotency_key, REQUIRED_IDENTITY_FIELDS, command=True)
+        return self._submit(
+            "dispatch_command",
+            payload,
+            idempotency_key,
+            REQUIRED_EXECUTION_IDENTITY_FIELDS,
+            command=True,
+        )
 
     def ingest_receipt(
         self,
@@ -295,12 +304,19 @@ class TestudoGatewayAdapter:
         if error:
             return self._failure("ingest_receipt", error)
         payload["operation"] = "ingest_receipt"
-        return self._submit("ingest_receipt", payload, idempotency_key, REQUIRED_IDENTITY_FIELDS, receipt=True)
+        return self._submit(
+            "ingest_receipt",
+            payload,
+            idempotency_key,
+            REQUIRED_EXECUTION_IDENTITY_FIELDS,
+            receipt=True,
+        )
 
     def correlation_id(self, mission_id: str, task_id: str) -> str:
-        """Return the stable correlation token for one mission/task pair."""
+        """Return Testudo's stable correlation token for one task."""
 
-        return _derive_correlation(mission_id, task_id)
+        del mission_id  # Retained in the public signature for compatibility.
+        return _derive_correlation(task_id)
 
     def _submit(
         self,
@@ -330,6 +346,9 @@ class TestudoGatewayAdapter:
         if correlation_error:
             return self._failure(operation, [correlation_error], correlation)
         payload["correlation_id"] = correlation
+        identity_errors = self._validate_identity_binding(payload, correlation)
+        if identity_errors:
+            return self._failure(operation, identity_errors, correlation)
         key = str(idempotency_key or _digest(operation, payload))
         if not IDENTITY_TOKEN_RE.fullmatch(key):
             return self._failure(operation, ["idempotency_key must be a safe identity token"], correlation)
@@ -354,6 +373,7 @@ class TestudoGatewayAdapter:
         result = self._send_with_retry(operation, payload, key, correlation)
         if result.ok:
             self._requests[key] = _StoredRequest(digest=digest, result=result)
+            self._identity_bindings.setdefault(correlation, {}).update(_identity_projection(payload))
         return result
 
     def _send_with_retry(
@@ -371,9 +391,15 @@ class TestudoGatewayAdapter:
                     last_error = "transport response must be an object"
                     continue
                 response_payload = copy.deepcopy(dict(response))
-                response_payload.setdefault("contract_version", self.expected_contract)
-                response_payload.setdefault("correlation_id", correlation)
-                response_payload.setdefault("identity", _identity_projection(payload))
+                response_errors = _validate_transport_response(
+                    response_payload,
+                    payload,
+                    self.expected_contract,
+                    correlation,
+                )
+                if response_errors:
+                    last_error = "; ".join(response_errors)
+                    continue
                 return GatewayResult(
                     ok=True,
                     operation=operation,
@@ -387,18 +413,32 @@ class TestudoGatewayAdapter:
         return self._failure(operation, [f"transport failed after {self.max_retries + 1} attempt(s): {last_error}"], correlation, idempotency_key, self.max_retries + 1)
 
     def _resolve_correlation(self, payload: Mapping[str, Any]) -> tuple[str, str | None]:
-        mission_id = str(payload.get("mission_id", ""))
-        task_id = str(payload.get("task_id", ""))
-        pair = (mission_id, task_id)
+        task_id = payload.get("task_id")
+        if not isinstance(task_id, str):
+            return "", "task_id must be present before deriving correlation_id"
+        correlation = _derive_correlation(task_id)
         supplied = payload.get("correlation_id")
-        correlation = str(supplied) if supplied is not None else _derive_correlation(mission_id, task_id)
-        if not IDENTITY_TOKEN_RE.fullmatch(correlation):
-            return correlation, "correlation_id must be a safe identity token"
-        prior = self._identity_correlations.get(pair)
-        if prior and prior != correlation:
-            return correlation, f"correlation_id {correlation!r} does not match established {prior!r}"
-        self._identity_correlations[pair] = correlation
+        if supplied is not None and supplied != correlation:
+            return str(supplied), (
+                f"correlation_id {supplied!r} does not match Testudo canonical "
+                f"value {correlation!r}"
+            )
         return correlation, None
+
+    def _validate_identity_binding(self, payload: Mapping[str, Any], correlation: str) -> list[str]:
+        """Reject a request that changes an established task identity."""
+
+        prior = self._identity_bindings.get(correlation)
+        if not prior:
+            return []
+        errors: list[str] = []
+        for field_name, value in _identity_projection(payload).items():
+            if field_name in prior and prior[field_name] != value:
+                errors.append(
+                    f"{field_name} {value!r} does not match established "
+                    f"identity {prior[field_name]!r}"
+                )
+        return errors
 
     def _validate_command(self, payload: Mapping[str, Any]) -> list[str]:
         errors: list[str] = []
@@ -488,9 +528,46 @@ def _identity_projection(payload: Mapping[str, Any]) -> dict[str, str]:
     return {key: str(payload[key]) for key in IDENTITY_FIELDS if key in payload and payload[key] is not None}
 
 
-def _derive_correlation(mission_id: str, task_id: str) -> str:
-    digest = hashlib.sha256(f"mission={mission_id}\ntask={task_id}".encode("utf-8")).hexdigest()[:24]
-    return f"corr-{digest}"
+def _validate_transport_response(
+    response: Mapping[str, Any],
+    request: Mapping[str, Any],
+    expected_contract: str,
+    correlation: str,
+) -> list[str]:
+    """Validate the minimum accepted-response contract before caching it."""
+
+    errors: list[str] = []
+    if response.get("accepted") is not True:
+        errors.append("transport response must explicitly report accepted=true")
+    if response.get("contract_version") != expected_contract:
+        errors.append(
+            f"transport response contract_version {response.get('contract_version')!r} "
+            f"does not match expected {expected_contract!r}"
+        )
+    if response.get("correlation_id") != correlation:
+        errors.append(
+            f"transport response correlation_id {response.get('correlation_id')!r} "
+            f"does not match expected {correlation!r}"
+        )
+
+    response_identity = response.get("identity")
+    if not isinstance(response_identity, Mapping):
+        errors.append("transport response identity must be an object")
+    else:
+        for field_name, value in _identity_projection(request).items():
+            if field_name == "correlation_id" and field_name not in response_identity:
+                continue
+            observed = response_identity.get(field_name)
+            if observed != value:
+                errors.append(
+                    f"transport response identity {field_name} {observed!r} "
+                    f"does not match request {value!r}"
+                )
+    return errors
+
+
+def _derive_correlation(task_id: str) -> str:
+    return f"task-correlation-{task_id}"
 
 
 def _digest(operation: str, payload: Mapping[str, Any]) -> str:

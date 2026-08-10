@@ -55,6 +55,7 @@ class TestudoGatewayAdapterTests(unittest.TestCase):
         self.assertEqual(request["task_id"], "task-rendering-001")
         self.assertEqual(request["attempt_id"], "attempt-001")
         self.assertEqual(request["workflow_run_id"], "workflow-run-001")
+        self.assertEqual(request["correlation_id"], "task-correlation-task-rendering-001")
         self.assertEqual(result.correlation_id, adapter.correlation_id("mission-rendering-001", "task-rendering-001"))
 
     def test_plan_and_command_dispatch_validate_v12_run_config(self) -> None:
@@ -120,24 +121,94 @@ class TestudoGatewayAdapterTests(unittest.TestCase):
         self.assertFalse(conflict.ok)
         self.assertTrue(any("conflicts" in error for error in conflict.errors), conflict.errors)
 
-    def test_explicit_correlation_must_remain_stable(self) -> None:
+    def test_canonical_correlation_must_remain_stable(self) -> None:
         adapter, _ = _adapter()
-        first = adapter.create_mission({**_identity(), "correlation_id": "corr-stable-001"})
+        canonical = "task-correlation-task-rendering-001"
+        first = adapter.create_mission({**_identity(), "correlation_id": canonical})
         second = adapter.dispatch_plan({**_identity(), "correlation_id": "corr-other-001"})
         receipt = adapter.ingest_receipt(
             {
                 **_identity(),
                 "receipt_id": "receipt-003",
                 "status": "completed",
-                "correlation_id": "corr-stable-001",
+                "correlation_id": canonical,
             }
         )
 
         self.assertTrue(first.ok, first.errors)
         self.assertFalse(second.ok)
-        self.assertTrue(any("established" in error for error in second.errors), second.errors)
+        self.assertTrue(any("canonical" in error for error in second.errors), second.errors)
         self.assertTrue(receipt.ok, receipt.errors)
-        self.assertEqual(receipt.correlation_id, "corr-stable-001")
+        self.assertEqual(receipt.correlation_id, canonical)
+
+    def test_command_and_receipt_require_attempt_id(self) -> None:
+        adapter, transport = _adapter()
+        missing_attempt = _identity()
+        del missing_attempt["attempt_id"]
+
+        command = adapter.dispatch_command(
+            {
+                **missing_attempt,
+                "pipeline_id": "render-network",
+                "pipeline_version": "1.0.0",
+            }
+        )
+        receipt = adapter.ingest_receipt(
+            {
+                **missing_attempt,
+                "receipt_id": "receipt-missing-attempt",
+                "status": "completed",
+            }
+        )
+
+        self.assertFalse(command.ok)
+        self.assertFalse(receipt.ok)
+        self.assertTrue(any("attempt_id" in error for error in command.errors), command.errors)
+        self.assertTrue(any("attempt_id" in error for error in receipt.errors), receipt.errors)
+        self.assertEqual(transport.requests, [])
+
+    def test_mismatched_attempt_identity_is_rejected_across_operations(self) -> None:
+        adapter, transport = _adapter()
+        command = adapter.dispatch_command(
+            {**_identity(), "pipeline_id": "render-network", "pipeline_version": "1.0.0"}
+        )
+        receipt = adapter.ingest_receipt(
+            {
+                **_identity(attempt_id="attempt-002"),
+                "receipt_id": "receipt-mismatched-attempt",
+                "status": "completed",
+            }
+        )
+
+        self.assertTrue(command.ok, command.errors)
+        self.assertFalse(receipt.ok)
+        self.assertTrue(any("attempt_id" in error for error in receipt.errors), receipt.errors)
+        self.assertEqual(len(transport.requests), 1)
+
+    def test_malformed_transport_response_fails_closed_and_is_not_cached(self) -> None:
+        transport = DryRunTransport(
+            responses={
+                "dispatch_command": {
+                    "accepted": True,
+                    "contract_version": "1.1",
+                    "correlation_id": "wrong-correlation",
+                    "identity": {"task_id": "wrong-task"},
+                }
+            }
+        )
+        adapter, _ = _adapter(transport=transport)
+        command = {**_identity(), "pipeline_id": "render-network", "pipeline_version": "1.0.0"}
+
+        first = adapter.dispatch_command(command, idempotency_key="malformed-response-001")
+        replay = adapter.dispatch_command(command, idempotency_key="malformed-response-001")
+
+        self.assertFalse(first.ok)
+        self.assertFalse(replay.ok)
+        self.assertFalse(replay.duplicate)
+        self.assertEqual(len(transport.requests), 2)
+        self.assertTrue(any("contract_version" in error for error in first.errors), first.errors)
+        self.assertTrue(any("correlation_id" in error for error in first.errors), first.errors)
+        self.assertTrue(any("identity" in error for error in first.errors), first.errors)
 
     def test_contract_version_mismatch_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
