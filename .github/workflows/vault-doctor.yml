@@ -1,0 +1,38 @@
+name: vault-doctor
+
+# Warning-first CI: runs the fixture-based test suite for the host-agnostic
+# vault_doctor tool. It does NOT run `vault-doctor check` against the real
+# modelling-knowledge vault — that repository is not checked out in this repo's
+# CI, and vault_doctor is a CLI pointed at an external path, not a bundled vault.
+
+on:
+  push:
+    paths:
+      - "src/modeller_memory/tools/vault_doctor/**"
+      - "tests/vault_doctor/**"
+      - "pyproject.toml"
+      - ".github/workflows/vault-doctor.yml"
+  pull_request:
+    paths:
+      - "src/modeller_memory/tools/vault_doctor/**"
+      - "tests/vault_doctor/**"
+      - "pyproject.toml"
+      - ".github/workflows/vault-doctor.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install package with dev extras
+        run: python -m pip install --upgrade pip && python -m pip install ".[dev]"
+
+      - name: Run vault_doctor tests
+        run: python -m pytest tests/ -q

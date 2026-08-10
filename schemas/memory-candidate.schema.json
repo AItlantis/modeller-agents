@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://modeller-memory/schemas/memory-candidate.schema.json",
+  "title": "MemoryCandidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_id",
+    "classification",
+    "claim",
+    "provenance",
+    "sensitivity",
+    "target",
+    "confidence",
+    "related_decisions",
+    "origin_run"
+  ],
+  "properties": {
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "classification": {
+      "type": "string",
+      "minLength": 1
+    },
+    "claim": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provenance": {
+      "type": "object"
+    },
+    "sensitivity": {
+      "type": "string",
+      "enum": ["public", "internal", "restricted"]
+    },
+    "target": {
+      "type": "string",
+      "enum": ["vault-inbox", "companion", "discard", "flag"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "related_decisions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "origin_run": {
+      "type": "string",
+      "minLength": 1
+    },
+    "conflicting_ref": {
+      "type": ["string", "null"]
+    },
+    "authority_context_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "contradictions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
