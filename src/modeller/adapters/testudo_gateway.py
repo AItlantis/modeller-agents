@@ -1,9 +1,8 @@
-"""Dry-run Testudo Gateway seam for mission and pipeline orchestration.
+"""Governed Testudo Gateway boundary for mission and pipeline orchestration.
 
 The adapter owns the boundary shape only.  It does not know a Testudo URL,
-credentials, registry client, or database connection.  The default transport
-records requests in memory; a deterministic test double can be injected when
-an integration test needs to control responses or transient failures.
+credentials, registry client, or database connection.  Production calls use an
+explicitly activated HTTP transport; deterministic test doubles are injectable.
 """
 
 # The adapter intentionally keeps one compact boundary module. These limits
@@ -17,6 +16,8 @@ import hashlib
 import json
 import math
 import re
+import urllib.error
+import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -35,13 +36,20 @@ IDENTITY_FIELDS = (
     "attempt_id",
     "mission_id",
     "correlation_id",
+    "pipeline_execution_id",
+    "workflow_id",
     "workflow_run_id",
     "principal_id",
     "scope",
     "scope_context",
 )
 REQUIRED_IDENTITY_FIELDS = ("mission_id", "task_id")
-REQUIRED_EXECUTION_IDENTITY_FIELDS = ("mission_id", "task_id", "attempt_id")
+REQUIRED_EXECUTION_IDENTITY_FIELDS = (
+    "mission_id",
+    "task_id",
+    "attempt_id",
+    "pipeline_execution_id",
+)
 PIPELINE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 RECEIPT_STATUSES = {"completed", "success", "partial", "failed", "cancelled", "recovery_required"}
 CANONICAL_JSON_VERSION = "testudo-canonical-json-v1"
@@ -97,6 +105,10 @@ class IdempotencyConflictError(TestudoGatewayError):
 
 class TransportError(RuntimeError):
     """A retryable failure reported by an injected transport."""
+
+
+class TransportConfigurationError(TestudoGatewayError):
+    """Raised when no explicitly activated Testudo transport is configured."""
 
 
 class CanonicalizationError(TestudoGatewayError):
@@ -221,14 +233,115 @@ class GatewayResult:
 
 @runtime_checkable
 class TestudoTransport(Protocol):
-    """Minimal injectable transport; no network implementation is provided."""
+    """Minimal injectable transport for the Testudo control-plane boundary."""
 
     def send(self, operation: str, payload: Mapping[str, Any], idempotency_key: str) -> Mapping[str, Any]:
         """Send one already-validated request and return a response mapping."""
 
 
+@dataclass(frozen=True)
+class TestudoTransportConfig:
+    """Explicit, non-provider configuration for the Testudo HTTP boundary."""
+
+    base_url: str
+    capability_token: str | None = None
+    timeout_seconds: float = 30.0
+    api_prefix: str = "/api/v1"
+    activation: bool = False
+
+    def __post_init__(self) -> None:
+        base_url = self.base_url.strip().rstrip("/")
+        if not base_url or not re.match(r"^https?://", base_url, re.IGNORECASE):
+            raise TransportConfigurationError("Testudo base_url must be an explicit http(s) URL")
+        if not isinstance(self.timeout_seconds, (int, float)) or self.timeout_seconds <= 0:
+            raise TransportConfigurationError("Testudo timeout_seconds must be positive")
+        if not self.api_prefix.startswith("/"):
+            raise TransportConfigurationError("Testudo api_prefix must start with '/'")
+        if self.activation and not self.capability_token:
+            raise TransportConfigurationError("activated Testudo transport requires scoped capability material")
+        object.__setattr__(self, "base_url", base_url)
+        object.__setattr__(self, "api_prefix", "/" + self.api_prefix.strip("/"))
+
+    @classmethod
+    def from_mapping(cls, config: Mapping[str, Any]) -> "TestudoTransportConfig":
+        """Build configuration from an explicit Testudo config mapping."""
+
+        if not isinstance(config, Mapping):
+            raise TransportConfigurationError("Testudo transport config must be an object")
+        return cls(
+            base_url=str(config.get("base_url", "")),
+            capability_token=config.get("capability_token"),
+            timeout_seconds=float(config.get("timeout_seconds", 30.0)),
+            api_prefix=str(config.get("api_prefix", "/api/v1")),
+            activation=bool(config.get("activation", False)),
+        )
+
+
+class HttpTestudoTransport:
+    """Governed HTTP client; it can call only Testudo's control-plane API."""
+
+    def __init__(self, config: TestudoTransportConfig, *, opener: Any = urllib.request.urlopen) -> None:
+        if not config.activation:
+            raise TransportConfigurationError("HTTP Testudo transport requires explicit activation=true")
+        self.config = config
+        self._opener = opener
+
+    def send(self, operation: str, payload: Mapping[str, Any], idempotency_key: str) -> Mapping[str, Any]:
+        """POST a typed command and normalize Testudo's JSON response."""
+
+        task_id = payload.get("task_id")
+        if not isinstance(task_id, str):
+            raise TransportError("Testudo requests require task_id")
+        suffix = {"create_mission": "plan", "dispatch_plan": "plan", "dispatch_command": "execute",
+                  "ingest_receipt": "receipts"}.get(operation)
+        if suffix is None:
+            raise TransportError(f"unsupported Testudo operation: {operation}")
+        url = f"{self.config.base_url}{self.config.api_prefix}/tasks/{task_id}/{suffix}"
+        body = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "application/json",
+                   "Idempotency-Key": idempotency_key}
+        if self.config.capability_token:
+            headers["Authorization"] = f"Bearer {self.config.capability_token}"
+        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        try:
+            with self._opener(request, timeout=self.config.timeout_seconds) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                raise TransportError("Testudo capability rejected or revoked") from exc
+            raise TransportError(f"Testudo HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise TransportError(f"Testudo transport unavailable: {exc}") from exc
+        try:
+            decoded = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise TransportError("Testudo returned a non-JSON response") from exc
+        if not isinstance(decoded, Mapping):
+            raise TransportError("Testudo response must be an object")
+        return decoded
+
+
+class UnconfiguredTestudoTransport:
+    """Fail-closed default; dry-run must be injected explicitly by tests."""
+
+    def send(self, operation: str, payload: Mapping[str, Any], idempotency_key: str) -> Mapping[str, Any]:
+        """Fail closed until the caller supplies explicit activation configuration."""
+        del operation, payload, idempotency_key
+        raise TransportConfigurationError(
+            "Testudo transport is not configured; inject DryRunTransport only for tests "
+            "or provide an activated TestudoTransportConfig"
+        )
+
+
+def build_testudo_transport(config: Mapping[str, Any] | TestudoTransportConfig) -> HttpTestudoTransport:
+    """Construct the real transport from explicit activation configuration."""
+
+    typed = config if isinstance(config, TestudoTransportConfig) else TestudoTransportConfig.from_mapping(config)
+    return HttpTestudoTransport(typed)
+
+
 class DryRunTransport:
-    """In-memory transport used by default and by contract/e2e tests."""
+    """Explicit in-memory transport for contract and fixture tests."""
 
     def __init__(self, *, failures_before_success: int = 0, responses: Mapping[str, Mapping[str, Any]] | None = None) -> None:
         self.failures_before_success = max(0, int(failures_before_success))
@@ -316,7 +429,7 @@ class InMemoryGatewayIdempotencyStore:
 
 
 class TestudoGatewayAdapter:
-    """Validate and route mission/command/receipt messages through a dry seam."""
+    """Validate and route messages through an explicit Testudo transport."""
 
     __test__ = False
 
@@ -324,6 +437,7 @@ class TestudoGatewayAdapter:
         self,
         root: Path | None = None,
         transport: TestudoTransport | Any | None = None,
+        transport_config: Mapping[str, Any] | TestudoTransportConfig | None = None,
         *,
         expected_contract: str = EXPECTED_PIPELINES_CONTRACT,
         max_retries: int = 0,
@@ -332,7 +446,15 @@ class TestudoGatewayAdapter:
         idempotency_store: InMemoryGatewayIdempotencyStore | None = None,
     ) -> None:
         self.root = (root or Path(__file__).resolve().parents[3]).resolve()
-        self.transport = transport or DryRunTransport()
+        if transport is not None and transport_config is not None:
+            raise TransportConfigurationError("provide transport or transport_config, not both")
+        self.transport = (
+            transport
+            if transport is not None
+            else build_testudo_transport(transport_config)
+            if transport_config is not None
+            else UnconfiguredTestudoTransport()
+        )
         self.expected_contract = str(expected_contract)
         self.max_retries = max(0, int(max_retries))
         if store is not None and idempotency_store is not None and store is not idempotency_store:
@@ -550,7 +672,13 @@ class TestudoGatewayAdapter:
         payload["operation"] = "dispatch_plan"
         if "plan" not in payload:
             payload["plan"] = {key: value for key, value in payload.items() if key not in IDENTITY_FIELDS}
-        return self._submit("dispatch_plan", payload, idempotency_key, REQUIRED_IDENTITY_FIELDS)
+        return self._submit(
+            "dispatch_plan",
+            payload,
+            idempotency_key,
+            REQUIRED_EXECUTION_IDENTITY_FIELDS,
+            execution_identity=True,
+        )
 
     def dispatch_command(
         self,
@@ -571,6 +699,7 @@ class TestudoGatewayAdapter:
             idempotency_key,
             REQUIRED_EXECUTION_IDENTITY_FIELDS,
             command=True,
+            execution_identity=True,
         )
 
     def ingest_receipt(
@@ -592,6 +721,7 @@ class TestudoGatewayAdapter:
             idempotency_key,
             REQUIRED_EXECUTION_IDENTITY_FIELDS,
             receipt=True,
+            execution_identity=True,
         )
 
     def correlation_id(self, mission_id: str, task_id: str) -> str:
@@ -610,6 +740,7 @@ class TestudoGatewayAdapter:
         *,
         command: bool = False,
         receipt: bool = False,
+        execution_identity: bool = False,
     ) -> GatewayResult:
         contract = self.validate_contract()
         if not contract.ok:
@@ -617,7 +748,10 @@ class TestudoGatewayAdapter:
 
         if command or receipt:
             payload.setdefault("contract_version", self.expected_contract)
-        errors = _validate_identity(payload, required_identity)
+        errors: list[str] = []
+        if execution_identity:
+            errors.extend(_project_workflow_identity(payload))
+        errors.extend(_validate_identity(payload, required_identity))
         if command:
             errors.extend(self._validate_command(payload))
             errors.extend(_validate_execution_evidence(payload))
@@ -709,6 +843,8 @@ class TestudoGatewayAdapter:
                 )
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 last_error = str(exc) or exc.__class__.__name__
+                if "revoked" in last_error.lower() or "capability rejected" in last_error.lower():
+                    break
         return self._failure(operation, [f"transport failed after {self.max_retries + 1} attempt(s): {last_error}"], correlation, idempotency_key, self.max_retries + 1)
 
     def _resolve_correlation(self, payload: Mapping[str, Any]) -> tuple[str, str | None]:
@@ -856,6 +992,22 @@ def _validate_identity(payload: Mapping[str, Any], required: tuple[str, ...]) ->
     return errors
 
 
+def _project_workflow_identity(payload: dict[str, Any]) -> list[str]:
+    """Project the adapter execution identity to Testudo's workflow_id."""
+
+    pipeline_execution_id = payload.get("pipeline_execution_id")
+    workflow_id = payload.get("workflow_id")
+    if not isinstance(pipeline_execution_id, str) or not IDENTITY_TOKEN_RE.fullmatch(pipeline_execution_id):
+        return []
+    if workflow_id is None:
+        payload["workflow_id"] = pipeline_execution_id
+    elif workflow_id != pipeline_execution_id:
+        return [
+            "workflow_id must match pipeline_execution_id; refusing to alias or overwrite a supplied value"
+        ]
+    return []
+
+
 def _validate_receipt(payload: Mapping[str, Any], expected_contract: str) -> list[str]:
     errors: list[str] = []
     receipt_id = payload.get("receipt_id")
@@ -933,7 +1085,9 @@ def _first_present(payload: Mapping[str, Any], fields: tuple[str, ...]) -> Any:
 
 
 def _identity_projection(payload: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: payload[key] for key in IDENTITY_FIELDS if key in payload and payload[key] is not None}
+    return {
+        key: payload[key] for key in IDENTITY_FIELDS if key in payload and payload[key] is not None
+    }
 
 
 def _validate_transport_response(

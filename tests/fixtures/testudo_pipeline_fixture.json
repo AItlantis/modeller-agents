@@ -1,0 +1,18 @@
+{
+  "testudo": {
+    "base_url": "http://testudo.fixture",
+    "api_prefix": "/api/v1",
+    "activation": true,
+    "capability_token": "fixture-scoped-capability"
+  },
+  "aimsun_psp": {
+    "backend_id": "aimsun-psp",
+    "contract_version": "1.2",
+    "pipeline_id": "render-network",
+    "pipeline_version": "1.0.0"
+  },
+  "recovery": {
+    "revoked_status": 403,
+    "successful_receipt_status": "completed"
+  }
+}
