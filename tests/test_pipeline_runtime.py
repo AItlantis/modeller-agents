@@ -76,6 +76,47 @@ class PipelineRuntimeTests(unittest.TestCase):
             self.assertEqual(first.receipt["outputs"][0]["path"], "map.png")
             self.assertEqual(first.receipt["evidence"], ["result.json", "map.png"])
 
+    def test_runtime_correlation_projects_evidence_to_testudo_envelopes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            backend_root = workspace / "backend"
+            run_dir = workspace / "run"
+            config = workspace / "config.yml"
+            backend_root.mkdir()
+            config.write_text("pipeline: smoke\n", encoding="utf-8")
+            (workspace / "backends.toml").write_text(
+                '[backend.aimsun-psp]\nstatus="active"\nbackend_id="aimsun-psp"\nexpected_contract="1.2"\n',
+                encoding="utf-8",
+            )
+            runner = backend_root / "runner.py"
+            runner.write_text(
+                "import json,sys\nfrom pathlib import Path\n"
+                "d=Path(sys.argv[sys.argv.index('--run-dir')+1]); d.mkdir(parents=True,exist_ok=True)\n"
+                "(d/'map.png').write_bytes(b'x')\n"
+                "(d/'result.json').write_text(json.dumps({'contract_version':'1.2','backend_id':'aimsun-psp','pipeline_id':'smoke','pipeline_version':'1.0.0','run_id':'r','status':'success','timestamps':{'started_at':'2026-08-11T00:00:00Z','completed_at':'2026-08-11T00:00:01Z'},'config_path':'config.yml','steps':[{'status':'success','step_id':1,'step_name':'smoke','artifacts':[]}],'artifacts':[{'name':'map','path':'map.png','type':'image/png'}]}))\n"
+                "print(str(d/'result.json'))\n", encoding="utf-8",
+            )
+            (backend_root / "backend.json").write_text(json.dumps({
+                "backend_id": "aimsun-psp", "contract_version": "1.2",
+                "runner": {"command": [sys.executable, "runner.py"], "interpreter": "system-python", "platform": ["any"]},
+                "pipelines": [{"id": "smoke", "definition": "smoke.pipeline.yml"}],
+            }), encoding="utf-8")
+            response = {"accepted": True, "dispatch": {
+                "backend_id": "aimsun-psp", "mission_id": "m", "task_id": "t",
+                "pipeline_execution_id": "e", "attempt_id": "a", "pipeline_id": "smoke",
+                "pipeline_version": "1.0.0", "runtime_correlation": {
+                    "schema_version": "1.0", "mission_id": "m", "task_id": "t",
+                    "workflow_run_id": "w", "attempt_id": "a", "pipeline_execution_id": "e",
+                    "pipeline_version_id": "pv", "project_id": "p", "active_context_revision_id": "c",
+                    "capability_grant_id": "g", "principal": {"id": "u"},
+                    "idempotency_key": "i", "sequence": 0,
+                },
+            }}
+            execution = execute_accepted_pipeline_dispatch(response, root=ROOT, backend_root=backend_root, config=config, run_dir=run_dir)
+            self.assertEqual(len(execution.testudo_events), 2)
+            self.assertEqual(execution.testudo_events[0]["correlation"]["workflow_run_id"], "w")
+            self.assertEqual(execution.testudo_receipt["sequence"], 3)
+
     def test_unaccepted_or_non_aimsun_dispatch_fails_closed(self) -> None:
         with self.assertRaises(PipelineRuntimeError):
             execute_accepted_pipeline_dispatch(

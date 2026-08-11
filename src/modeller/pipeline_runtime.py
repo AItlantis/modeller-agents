@@ -29,6 +29,8 @@ class PipelineRuntimeExecution:
     result: dict[str, Any]
     events: tuple[dict[str, Any], ...]
     receipt: dict[str, Any]
+    testudo_events: tuple[dict[str, Any], ...] = ()
+    testudo_receipt: dict[str, Any] | None = None
 
 
 def execute_accepted_pipeline_dispatch(
@@ -148,7 +150,72 @@ def execute_accepted_pipeline_dispatch(
     ).to_dict()
 
     _validate_emissions(Path(root), events, receipt)
-    return PipelineRuntimeExecution(run_result=run_result, result=result, events=events, receipt=receipt)
+    if dispatch.get("runtime_correlation") is not None:
+        testudo_events, testudo_receipt = _testudo_emissions(
+            dispatch=dispatch,
+            events=events,
+            receipt=receipt,
+            artifact_refs=artifact_refs,
+        )
+    else:
+        testudo_events, testudo_receipt = (), None
+    return PipelineRuntimeExecution(
+        run_result=run_result,
+        result=result,
+        events=events,
+        receipt=receipt,
+        testudo_events=testudo_events,
+        testudo_receipt=testudo_receipt,
+    )
+
+
+def _testudo_emissions(
+    *,
+    dispatch: Mapping[str, Any],
+    events: tuple[dict[str, Any], ...],
+    receipt: Mapping[str, Any],
+    artifact_refs: list[str],
+) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+    """Translate the backend-owned evidence contract to Testudo's envelope.
+
+    The modeller-agents contract remains stable for local runtime consumers;
+    this explicit projection is the only bridge to Testudo's GeoLibre Notebook
+    runtime ingress.  No backend command or credential is added to the envelope.
+    """
+    correlation = dispatch.get("runtime_correlation")
+    if not isinstance(correlation, Mapping):
+        raise PipelineRuntimeError("accepted dispatch is missing runtime_correlation")
+    required = ("mission_id", "task_id", "attempt_id", "pipeline_execution_id", "principal")
+    missing = [key for key in required if not correlation.get(key)]
+    if missing:
+        raise PipelineRuntimeError("runtime_correlation is missing: " + ", ".join(missing))
+    testudo_events = tuple(
+        {
+            "schema_version": "1.0",
+            "event_id": event["runtime_event_id"],
+            "event_type": event["event_type"],
+            "correlation": dict(correlation),
+            "sequence": event["sequence"],
+            "payload": {
+                **dict(event.get("payload", {})),
+                "evidence_refs": list(event.get("evidence_refs", [])),
+            },
+        }
+        for event in events
+    )
+    refs = [{"logical_path": ref, "source": "aimsun-psp"} for ref in artifact_refs]
+    terminal_sequence = max((event["sequence"] for event in testudo_events), default=0) + 1
+    testudo_receipt = {
+        "schema_version": "1.0",
+        "receipt_id": receipt["receipt_id"],
+        "status": receipt["status"],
+        "correlation": dict(correlation),
+        "event_id": testudo_events[-1]["event_id"] if testudo_events else None,
+        "sequence": terminal_sequence,
+        "artifact_refs": refs,
+        "error": receipt.get("error"),
+    }
+    return testudo_events, testudo_receipt
 
 
 def _accepted_dispatch(response: Mapping[str, Any]) -> Mapping[str, Any]:

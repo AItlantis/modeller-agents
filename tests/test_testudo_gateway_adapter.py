@@ -54,6 +54,7 @@ def _identity(**overrides: object) -> dict[str, object]:
         "mission_id": "mission-rendering-001",
         "task_id": "task-rendering-001",
         "attempt_id": "attempt-001",
+        "pipeline_execution_id": "pipeline-execution-001",
         "workflow_run_id": "workflow-run-001",
     }
     payload.update(overrides)
@@ -128,6 +129,8 @@ class TestudoGatewayAdapterTests(unittest.TestCase):
         self.assertEqual(request["mission_id"], "mission-rendering-001")
         self.assertEqual(request["task_id"], "task-rendering-001")
         self.assertEqual(request["attempt_id"], "attempt-001")
+        self.assertEqual(request["pipeline_execution_id"], "pipeline-execution-001")
+        self.assertNotIn("workflow_id", request)
         self.assertEqual(request["workflow_run_id"], "workflow-run-001")
         self.assertEqual(request["correlation_id"], "task-correlation-task-rendering-001")
         self.assertEqual(result.correlation_id, adapter.correlation_id("mission-rendering-001", "task-rendering-001"))
@@ -144,6 +147,145 @@ class TestudoGatewayAdapterTests(unittest.TestCase):
         self.assertTrue(plan.ok, plan.errors)
         self.assertTrue(receipt.ok, receipt.errors)
         self.assertEqual(len(transport.requests), 2)
+
+    def test_pipeline_call_projects_notebook_operation_request_without_rewriting_fields(self) -> None:
+        adapter, transport = _adapter()
+        notebook_request = {
+            **_identity(),
+            "notebook_session_id": "session-001",
+            "cell_id": "cell-001",
+            "correlation": {"request_id": "request-001", "source": "geolibre"},
+            "payload": {"pipeline_id": "render-network", "inputs": {"scenario": "base"}},
+        }
+
+        result = adapter.pipeline_call(notebook_request, idempotency_key="notebook-call-001")
+
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(result.operation, "pipeline_call")
+        self.assertEqual(len(transport.requests), 1)
+        sent = transport.requests[0]["payload"]
+        self.assertEqual(sent["operation"], "pipeline_call")
+        self.assertEqual(sent["notebook_session_id"], "session-001")
+        self.assertEqual(sent["cell_id"], "cell-001")
+        self.assertEqual(sent["correlation"], notebook_request["correlation"])
+        self.assertEqual(sent["payload"], notebook_request["payload"])
+        self.assertEqual(sent["task_id"], notebook_request["task_id"])
+
+    def test_pipeline_call_rejects_incomplete_or_malformed_notebook_request_before_transport(self) -> None:
+        transport = DryRunTransport()
+        adapter, _ = _adapter(transport=transport)
+        for field_name in ("notebook_session_id", "cell_id", "correlation", "payload"):
+            with self.subTest(field=field_name):
+                candidate = {
+                    **_identity(),
+                    "notebook_session_id": "session-001",
+                    "cell_id": "cell-001",
+                    "correlation": {},
+                    "payload": {},
+                }
+                del candidate[field_name]
+                result = adapter.pipeline_call(candidate)
+                self.assertFalse(result.ok)
+                self.assertTrue(any(field_name in error for error in result.errors), result.errors)
+        malformed = adapter.pipeline_call({
+            **_identity(),
+            "notebook_session_id": "session with spaces",
+            "cell_id": "cell-001",
+            "correlation": [],
+            "payload": [],
+        })
+        self.assertFalse(malformed.ok)
+        self.assertTrue(any("safe identity token" in error for error in malformed.errors), malformed.errors)
+        self.assertTrue(any("correlation" in error for error in malformed.errors), malformed.errors)
+        self.assertTrue(any("payload" in error for error in malformed.errors), malformed.errors)
+        self.assertEqual(transport.requests, [])
+
+    def test_pipeline_call_reuses_gateway_idempotency_and_response_contract(self) -> None:
+        adapter, transport = _adapter()
+        request = {
+            **_identity(),
+            "notebook_session_id": "session-001",
+            "cell_id": "cell-001",
+            "correlation": {"request_id": "request-001"},
+            "payload": {"pipeline_id": "render-network"},
+        }
+
+        first = adapter.pipeline_call(request, idempotency_key="notebook-call-002")
+        replay = adapter.pipeline_call(request, idempotency_key="notebook-call-002")
+        conflict = adapter.pipeline_call(
+            {**request, "payload": {"pipeline_id": "other-pipeline"}},
+            idempotency_key="notebook-call-002",
+        )
+
+        self.assertTrue(first.ok, first.errors)
+        self.assertTrue(replay.duplicate)
+        self.assertFalse(conflict.ok)
+        self.assertTrue(any("conflicts" in error for error in conflict.errors), conflict.errors)
+        self.assertEqual(len(transport.requests), 1)
+
+    def test_execution_identity_projects_pipeline_execution_to_workflow_id(self) -> None:
+        adapter, transport = _adapter()
+        result = adapter.dispatch_command(_command())
+        self.assertTrue(result.ok, result.errors)
+        request = transport.requests[0]["payload"]
+        self.assertEqual(request["pipeline_execution_id"], "pipeline-execution-001")
+        self.assertEqual(request["workflow_id"], "pipeline-execution-001")
+        self.assertEqual(request["workflow_run_id"], "workflow-run-001")
+        self.assertNotEqual(request["workflow_run_id"], request["pipeline_execution_id"])
+
+        optional_workflow_run = _command()
+        del optional_workflow_run["workflow_run_id"]
+        optional = adapter.dispatch_command(optional_workflow_run)
+        self.assertTrue(optional.ok, optional.errors)
+        optional_request = transport.requests[1]["payload"]
+        self.assertNotIn("workflow_run_id", optional_request)
+        self.assertEqual(optional_request["workflow_id"], optional_request["pipeline_execution_id"])
+
+    def test_execution_identity_rejects_missing_pipeline_and_mismatched_workflow_before_transport(self) -> None:
+        for operation, payload in (
+            ("plan", {**_identity(), "plan": {"stages": ["RM-00"]}}),
+            ("command", _command()),
+            ("receipt", {
+                **_identity(),
+                "receipt_id": "receipt-identity-001",
+                "status": "completed",
+            }),
+        ):
+            with self.subTest(case=f"missing pipeline {operation}"):
+                transport = DryRunTransport()
+                adapter, _ = _adapter(transport=transport)
+                candidate = dict(payload)
+                del candidate["pipeline_execution_id"]
+                result = getattr(adapter, f"dispatch_{operation}")(candidate) if operation != "receipt" else adapter.ingest_receipt(candidate)
+                self.assertFalse(result.ok)
+                self.assertTrue(any("pipeline_execution_id" in error for error in result.errors), result.errors)
+                self.assertEqual(transport.requests, [])
+
+            with self.subTest(case=f"mismatched workflow {operation}"):
+                transport = DryRunTransport()
+                adapter, _ = _adapter(transport=transport)
+                candidate = {**payload, "workflow_id": "workflow-other-001"}
+                result = getattr(adapter, f"dispatch_{operation}")(candidate) if operation != "receipt" else adapter.ingest_receipt(candidate)
+                self.assertFalse(result.ok)
+                self.assertTrue(any("workflow_id" in error for error in result.errors), result.errors)
+                self.assertEqual(transport.requests, [])
+
+    def test_execution_identity_changes_fail_closed_after_binding(self) -> None:
+        adapter, transport = _adapter()
+        first = adapter.dispatch_command(_command())
+        changed_pipeline = adapter.dispatch_command(
+            _command(pipeline_execution_id="pipeline-execution-002")
+        )
+        changed_attempt = adapter.dispatch_command(_command(attempt_id="attempt-002"))
+        changed_workflow_run = adapter.dispatch_command(_command(workflow_run_id="workflow-run-002"))
+        self.assertTrue(first.ok, first.errors)
+        self.assertFalse(changed_pipeline.ok)
+        self.assertFalse(changed_attempt.ok)
+        self.assertFalse(changed_workflow_run.ok)
+        self.assertTrue(any("pipeline_execution_id" in error for error in changed_pipeline.errors), changed_pipeline.errors)
+        self.assertTrue(any("attempt_id" in error for error in changed_attempt.errors), changed_attempt.errors)
+        self.assertTrue(any("workflow_run_id" in error for error in changed_workflow_run.errors), changed_workflow_run.errors)
+        self.assertEqual(len(transport.requests), 1)
 
     def test_execution_evidence_rejects_missing_stale_changed_and_cross_task(self) -> None:
         cases = [
@@ -226,17 +368,38 @@ class TestudoGatewayAdapterTests(unittest.TestCase):
         adapter, transport = _adapter()
         missing_attempt = _identity()
         del missing_attempt["attempt_id"]
+        plan = adapter.dispatch_plan({**missing_attempt, "plan": {"stages": ["RM-00"]}})
         command = adapter.dispatch_command({**missing_attempt, **_evidence(), "pipeline_id": "render-network"})
         receipt = adapter.ingest_receipt({
             **missing_attempt,
             "receipt_id": "receipt-missing-attempt",
             "status": "completed",
         })
+        self.assertFalse(plan.ok)
         self.assertFalse(command.ok)
         self.assertFalse(receipt.ok)
+        self.assertTrue(any("attempt_id" in error for error in plan.errors), plan.errors)
         self.assertTrue(any("attempt_id" in error for error in command.errors), command.errors)
         self.assertTrue(any("attempt_id" in error for error in receipt.errors), receipt.errors)
         self.assertEqual(transport.requests, [])
+
+    def test_response_workflow_identity_mismatch_is_rejected_without_ledger_write(self) -> None:
+        transport = DryRunTransport(responses={
+            "dispatch_command": {
+                "identity": {
+                    "mission_id": "mission-rendering-001",
+                    "task_id": "task-rendering-001",
+                    "attempt_id": "attempt-001",
+                    "pipeline_execution_id": "pipeline-execution-001",
+                    "workflow_id": "workflow-other-001",
+                }
+            }
+        })
+        adapter, _ = _adapter(transport=transport)
+        result = adapter.dispatch_command(_command(), idempotency_key="workflow-response-001")
+        self.assertFalse(result.ok)
+        self.assertEqual(adapter.store.records, {})
+        self.assertTrue(any("workflow_id" in error for error in result.errors), result.errors)
 
     def test_malformed_transport_response_fails_closed_and_is_not_cached(self) -> None:
         transport = DryRunTransport(responses={

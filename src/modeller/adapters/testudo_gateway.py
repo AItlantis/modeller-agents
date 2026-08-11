@@ -50,6 +50,7 @@ REQUIRED_EXECUTION_IDENTITY_FIELDS = (
     "attempt_id",
     "pipeline_execution_id",
 )
+NOTEBOOK_OPERATION_FIELDS = ("notebook_session_id", "cell_id", "correlation", "payload")
 PIPELINE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 RECEIPT_STATUSES = {"completed", "success", "partial", "failed", "cancelled", "recovery_required"}
 CANONICAL_JSON_VERSION = "testudo-canonical-json-v1"
@@ -248,6 +249,8 @@ class TestudoTransportConfig:
     timeout_seconds: float = 30.0
     api_prefix: str = "/api/v1"
     activation: bool = False
+    notebook_origin: str | None = None
+    notebook_relay_token: str | None = None
 
     def __post_init__(self) -> None:
         base_url = self.base_url.strip().rstrip("/")
@@ -274,6 +277,8 @@ class TestudoTransportConfig:
             timeout_seconds=float(config.get("timeout_seconds", 30.0)),
             api_prefix=str(config.get("api_prefix", "/api/v1")),
             activation=bool(config.get("activation", False)),
+            notebook_origin=config.get("notebook_origin"),
+            notebook_relay_token=config.get("notebook_relay_token"),
         )
 
 
@@ -310,11 +315,16 @@ class HttpTestudoTransport:
         if suffix is None:
             if operation != "pipeline_call":
                 raise TransportError(f"unsupported Testudo operation: {operation}")
-        body = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        wire_payload = _notebook_wire_payload(payload, idempotency_key) if operation == "pipeline_call" else dict(payload)
+        body = json.dumps(wire_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         headers = {"Content-Type": "application/json", "Accept": "application/json",
                    "Idempotency-Key": idempotency_key}
         if self.config.capability_token:
             headers["Authorization"] = f"Bearer {self.config.capability_token}"
+        if operation == "pipeline_call" and self.config.notebook_origin:
+            headers["Origin"] = self.config.notebook_origin
+        if operation == "pipeline_call" and self.config.notebook_relay_token:
+            headers["X-Testudo-Relay-Token"] = self.config.notebook_relay_token
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
             with self._opener(request, timeout=self.config.timeout_seconds) as response:
@@ -382,7 +392,7 @@ class DryRunTransport:
         response.setdefault("contract_version", EXPECTED_PIPELINES_CONTRACT)
         response.setdefault("correlation_id", payload.get("correlation_id"))
         response.setdefault("identity", copy.deepcopy(dict(payload)))
-        response.setdefault("request_digest", _digest(operation, payload))
+        response.setdefault("request_digest", _request_digest(operation, payload, key=idempotency_key))
         response.setdefault(
             "response_identity",
             {
@@ -715,6 +725,34 @@ class TestudoGatewayAdapter:
             execution_identity=True,
         )
 
+    def pipeline_call(
+        self,
+        request: Mapping[str, Any] | None = None,
+        *,
+        idempotency_key: str | None = None,
+        **fields: Any,
+    ) -> GatewayResult:
+        """Submit one GeoLibre Notebook ``pipeline_call`` operation.
+
+        The Notebook request fields are passed through unchanged to the existing
+        transport.  The adapter adds only its established operation and task
+        correlation fields; it does not define a second Notebook protocol.
+        """
+
+        payload, error = _merge_payload(request, fields, "pipeline_call")
+        if error:
+            return self._failure("pipeline_call", error)
+        payload["operation"] = "pipeline_call"
+        errors = _validate_notebook_operation(payload)
+        if errors:
+            return self._failure("pipeline_call", errors, payload.get("correlation_id"))
+        return self._submit(
+            "pipeline_call",
+            payload,
+            idempotency_key,
+            REQUIRED_IDENTITY_FIELDS,
+        )
+
     def ingest_receipt(
         self,
         receipt: Mapping[str, Any] | None = None,
@@ -781,7 +819,11 @@ class TestudoGatewayAdapter:
         if identity_errors:
             return self._failure(operation, identity_errors, correlation)
         try:
-            digest = _digest(operation, payload)
+            if operation == "pipeline_call" and idempotency_key is None:
+                candidate = payload.get("correlation")
+                if isinstance(candidate, Mapping) and isinstance(candidate.get("idempotency_key"), str):
+                    idempotency_key = candidate["idempotency_key"]
+            digest = _request_digest(operation, payload, key=idempotency_key or None)
             terminal_completed_at = self.policy.utc_now()
         except (CanonicalizationError, ValueError) as exc:
             return self._failure(operation, [str(exc)], correlation)
@@ -1005,6 +1047,28 @@ def _validate_identity(payload: Mapping[str, Any], required: tuple[str, ...]) ->
     return errors
 
 
+def _validate_notebook_operation(payload: Mapping[str, Any]) -> list[str]:
+    """Validate the fields owned by Testudo's NotebookOperationRequest."""
+
+    errors: list[str] = []
+    for field_name in NOTEBOOK_OPERATION_FIELDS:
+        if field_name not in payload:
+            errors.append(f"pipeline_call {field_name} is required")
+    for field_name in ("notebook_session_id", "cell_id"):
+        value = payload.get(field_name)
+        if field_name in payload and (
+            not isinstance(value, str) or not IDENTITY_TOKEN_RE.fullmatch(value)
+        ):
+            errors.append(f"pipeline_call {field_name} must be a safe identity token")
+    correlation = payload.get("correlation")
+    if "correlation" in payload and not isinstance(correlation, Mapping):
+        errors.append("pipeline_call correlation must be an object")
+    notebook_payload = payload.get("payload")
+    if "payload" in payload and not isinstance(notebook_payload, Mapping):
+        errors.append("pipeline_call payload must be an object")
+    return errors
+
+
 def _project_workflow_identity(payload: dict[str, Any]) -> list[str]:
     """Project the adapter execution identity to Testudo's workflow_id."""
 
@@ -1136,7 +1200,7 @@ def _validate_transport_response(
             f"transport response idempotency_key {response.get('idempotency_key')!r} "
             f"does not match expected {idempotency_key!r}"
         )
-    expected_digest = _digest(str(request.get("operation")), request)
+    expected_digest = _request_digest(str(request.get("operation")), request, key=idempotency_key)
     if response.get("request_digest") != expected_digest:
         errors.append(
             f"transport response request_digest {response.get('request_digest')!r} "
@@ -1221,6 +1285,46 @@ def canonical_digest(value: Any) -> str:
 
 def _digest(operation: str, payload: Mapping[str, Any]) -> str:
     return canonical_digest({"operation": operation, "payload": payload})
+
+
+def _notebook_wire_payload(payload: Mapping[str, Any], idempotency_key: str | None = None) -> dict[str, Any]:
+    """Project adapter metadata into GeoLibre/Testudo's typed Notebook body."""
+    correlation = dict(payload.get("correlation") or {})
+    identity_map = {
+        "mission_id": "mission_id", "task_id": "task_id", "attempt_id": "attempt_id", "workflow_run_id": "workflow_run_id",
+        "pipeline_execution_id": "pipeline_execution_id", "pipeline_version_id": "pipeline_version_id",
+        "project_id": "project_id", "active_context_revision_id": "active_context_revision_id",
+        "capability_grant_id": "capability_grant_id", "principal": "principal",
+        "required_scopes": "required_scopes", "runtime_endpoint": "runtime_endpoint",
+        "runtime_version": "runtime_version",
+    }
+    for source, target in identity_map.items():
+        if target not in correlation and source in payload:
+            correlation[target] = payload[source]
+    correlation.setdefault("schema_version", "1.0")
+    correlation.setdefault("workflow_run_id", None)
+    correlation.setdefault("required_scopes", {})
+    correlation.setdefault("runtime_endpoint", None)
+    correlation.setdefault("runtime_version", None)
+    if idempotency_key and "idempotency_key" not in correlation:
+        correlation["idempotency_key"] = idempotency_key
+    if "sequence" not in correlation:
+        correlation["sequence"] = 0
+    return {
+        "schema_version": "1.0",
+        "operation": "pipeline_call",
+        "correlation": correlation,
+        "notebook_session_id": payload.get("notebook_session_id"),
+        "cell_id": payload.get("cell_id"),
+        "approval_reference": payload.get("approval_reference"),
+        "payload": dict(payload.get("payload") or {}),
+    }
+
+
+def _request_digest(operation: str, payload: Mapping[str, Any], key: str | None = None) -> str:
+    if operation == "pipeline_call":
+        return canonical_digest(_notebook_wire_payload(payload, key))
+    return _digest(operation, payload)
 
 
 def _send(transport: TestudoTransport | Any, operation: str, payload: Mapping[str, Any], idempotency_key: str) -> Mapping[str, Any]:
