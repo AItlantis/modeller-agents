@@ -292,11 +292,24 @@ class HttpTestudoTransport:
         task_id = payload.get("task_id")
         if not isinstance(task_id, str):
             raise TransportError("Testudo requests require task_id")
-        suffix = {"create_mission": "plan", "dispatch_plan": "plan", "dispatch_command": "execute",
-                  "ingest_receipt": "receipts"}.get(operation)
+        if operation == "pipeline_call":
+            required = ("notebook_session_id", "cell_id", "correlation", "payload")
+            missing = [field for field in required if field not in payload]
+            if missing:
+                raise TransportError(
+                    "GeoLibre pipeline_call is missing Notebook fields: " + ", ".join(missing)
+                )
+            if not isinstance(payload.get("correlation"), Mapping):
+                raise TransportError("GeoLibre pipeline_call correlation must be an object")
+            suffix = None
+            url = f"{self.config.base_url}{self.config.api_prefix}/notebook/operations"
+        else:
+            suffix = {"create_mission": "plan", "dispatch_plan": "plan", "dispatch_command": "execute",
+                      "ingest_receipt": "receipts"}.get(operation)
+            url = f"{self.config.base_url}{self.config.api_prefix}/tasks/{task_id}/{suffix}" if suffix else ""
         if suffix is None:
-            raise TransportError(f"unsupported Testudo operation: {operation}")
-        url = f"{self.config.base_url}{self.config.api_prefix}/tasks/{task_id}/{suffix}"
+            if operation != "pipeline_call":
+                raise TransportError(f"unsupported Testudo operation: {operation}")
         body = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         headers = {"Content-Type": "application/json", "Accept": "application/json",
                    "Idempotency-Key": idempotency_key}
