@@ -16,6 +16,7 @@ skills:
   - pipeline-fix
   - pipeline-review
   - pipeline-smoke
+  - scenario-impact-analysis
 
 bundles:
   - id: testudo

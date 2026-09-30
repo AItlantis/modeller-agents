@@ -9,8 +9,9 @@ central_skills = [
   "source-boundary-check",
   "antagonist-review",
   "review",
-  "memory-recon"
+  "memory-recon",
+  "scenario-impact-analysis"
 ]
 
 local_agents_stay_in_source = true
-notes = "Testudo owns product cockpit, UI, permissions, visual context, task status, and product audit."
+notes = "Testudo owns product cockpit, UI, permissions, visual context, task status, product audit, live chat turns, and package query authorization. modeller-agents scenario-impact-analysis is an optional read-only reusable workflow and never hosts chat or runs simulations."

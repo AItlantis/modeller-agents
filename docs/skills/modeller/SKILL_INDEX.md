@@ -17,6 +17,7 @@ without duplicating every skill body.
 - `pipeline-fix`
 - `pipeline-review`
 - `pipeline-smoke`
+- `scenario-impact-analysis`
 - `review`
 - `source-boundary-check`
 - `v-cycle`
