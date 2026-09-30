@@ -8,7 +8,8 @@
     "source-boundary-check",
     "antagonist-review",
     "review",
-    "memory-recon"
+    "memory-recon",
+    "scenario-impact-analysis"
   ],
   "referencePacks": [
     "reference-packs/testudo.toml"
