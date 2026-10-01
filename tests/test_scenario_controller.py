@@ -45,7 +45,13 @@ class ScenarioAnalysisControllerTests(unittest.TestCase):
         self.assertEqual(plan["profile_source"], "user_request")
         self.assertEqual(plan["status"], "needs_evidence")
         self.assertIn("Testudo capability: path_queries", plan["missing_evidence"])
+        self.assertIn("Testudo capability: subpath_crosswalk", plan["missing_evidence"])
         self.assertIn("Testudo capability: od_pair_aggregation", plan["missing_evidence"])
+        self.assertIn("Testudo capability: path_delay_rollup", plan["missing_evidence"])
+        self.assertIn("Testudo capability: subpath_metrics", plan["missing_evidence"])
+        step_ids = [step["id"] for step in plan["steps"]]
+        self.assertIn("sum_section_delay_along_selected_paths", step_ids)
+        self.assertIn("query_subpath_journey_times", step_ids)
 
     def test_od_profile_requires_version_scoped_od_metrics_and_aligned_clock_windows(self):
         plan = self.controller.plan(_catalog(), "works", ollaya_profile="od_time_series")

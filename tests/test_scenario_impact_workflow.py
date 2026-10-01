@@ -37,6 +37,64 @@ class _Testudo:
         return {"status": "complete", "rows": self.rows}
 
 
+class _PathTestudo(_Testudo):
+    window = {"start": "2024-06-27T08:00:00", "end": "2024-06-27T08:05:00"}
+
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.crosswalk_calls = []
+        self.route_calls = []
+        self.delay_calls = []
+        self.subpath_calls = []
+        self.delay_complete = True
+
+    def catalog(self):
+        value = super().catalog()
+        value["analysis_capabilities"] = {
+            "path_queries": True,
+            "subpath_crosswalk": True,
+            "od_pair_aggregation": True,
+            "path_delay_rollup": True,
+            "subpath_metrics": True,
+        }
+        value["available_od_metrics"] = []
+        return value
+
+    def subpath_crosswalk(self, scenario_id):
+        self.crosswalk_calls.append(scenario_id)
+        oid, rid = (500, 7) if scenario_id == 2 else (900, 11)
+        return {"available": True, "rows": [{
+            "subpath_oid": oid, "external_id": "path-5", "route_hash": "hash-5",
+            "section_ids": [10, 20], "match_status": "matched",
+            "origin": 1, "destination": 2, "vehicle": 3, "route_ids": [rid],
+        }]}
+
+    def od_routes(self, scenario_id, origin, destination, *, vehicle=None, interval=None):
+        self.route_calls.append((scenario_id, origin, destination, vehicle, interval))
+        rid, volume = (7, 50) if scenario_id == 2 else (11, 40)
+        return {"routes": [{"route_id": rid, "interval": 1, "route_volume": volume}]}
+
+    def path_delay(self, scenario_id, section_ids, interval):
+        self.delay_calls.append((scenario_id, section_ids, interval))
+        value = 20 if scenario_id == 2 else 15
+        return {
+            "available": True, "value": value, "complete": self.delay_complete,
+            "coverage": 1.0 if self.delay_complete else 0.5,
+            "expected_sections": 2, "observed_sections": 2 if self.delay_complete else 1,
+            "missing_section_ids": [] if self.delay_complete else [20],
+            "section_values": [{"section_id": 10, "delay": value / 2},
+                               {"section_id": 20, "delay": value / 2}],
+            "time_window": self.window,
+        }
+
+    def subpath_metrics(self, scenario_id, subpath_ids, intervals):
+        self.subpath_calls.append((scenario_id, subpath_ids, intervals))
+        oid, value = (500, 120) if scenario_id == 2 else (900, 100)
+        return {"available": True, "rows": [{
+            "oid": oid, "ent": 1, "journey_time": value, "count": 10,
+        }]}
+
+
 class _Matcher:
     def __init__(self, decision=None, error=None):
         self.decision, self.error = decision, error
@@ -85,6 +143,63 @@ class ScenarioImpactWorkflowTests(unittest.TestCase):
         self.assertTrue(result["period_analysis"]["available"])
         self.assertIn("during", result["period_analysis"]["periods"])
         self.assertFalse(result["interpolation"])
+
+    def test_path_impact_executes_crosswalk_od_delay_sum_and_observed_subpath_time(self):
+        testudo = _PathTestudo(_rows())
+        result = ScenarioImpactWorkflow(
+            testudo, _Matcher({"status": "matched", "scenario_id": "2", "model_match_score": 0.92})
+        ).analyze("Compare Roadworks North", intervals=[1], requested_profile="path_impact")
+
+        self.assertEqual(result["analysis_status"], "complete")
+        self.assertEqual(result["path_impact"]["status"], "complete")
+        self.assertEqual(testudo.crosswalk_calls, [2, 1])
+        self.assertEqual(testudo.route_calls, [(2, 1, 2, 3, None), (1, 1, 2, 3, None)])
+        self.assertEqual(testudo.delay_calls, [(2, [10, 20], 1), (1, [10, 20], 1)])
+        self.assertEqual(testudo.subpath_calls, [(2, [500], [1]), (1, [900], [1])])
+        path = result["path_impact"]["paths"][0]
+        self.assertEqual(path["section_delay_rollups"][0]["delta"], 5)
+        self.assertEqual(path["observed_subpath_journey_times"][0]["delta"], 20)
+        self.assertEqual(path["path_assignment"]["current"]["interval_flows"], [
+            {"interval_id": 1, "route_volume": 50.0},
+        ])
+        self.assertIsNone(path["path_assignment"]["current"]["total_route_volume_across_assignment_intervals"])
+        self.assertEqual(result["path_impact"]["affected_od_pairs"], [
+            {"origin": 1, "destination": 2, "vehicle": 3},
+        ])
+
+    def test_path_impact_withholds_delta_when_absolute_windows_do_not_match(self):
+        rows = _rows()
+        rows[2]["time_window"] = {"start": "2024-06-27T07:00:00", "end": "2024-06-27T07:05:00"}
+        rows[3]["time_window"] = rows[2]["time_window"]
+        testudo = _PathTestudo(rows)
+        result = ScenarioImpactWorkflow(
+            testudo, _Matcher({"status": "matched", "scenario_id": "2", "model_match_score": 0.9})
+        ).analyze("Compare Roadworks North", intervals=[1], requested_profile="path_impact")
+        path = result["path_impact"]["paths"][0]
+        self.assertIsNone(path["section_delay_rollups"][0]["delta"])
+        self.assertFalse(path["section_delay_rollups"][0]["comparable"])
+        self.assertIsNone(path["observed_subpath_journey_times"][0]["delta"])
+
+    def test_path_impact_fails_closed_when_package_does_not_advertise_capabilities(self):
+        testudo = _Testudo(_rows())
+        result = ScenarioImpactWorkflow(
+            testudo, _Matcher({"status": "matched", "scenario_id": "2", "model_match_score": 0.9})
+        ).analyze("Compare Roadworks North", intervals=[1], requested_profile="path_impact")
+        self.assertEqual(result["analysis_status"], "partial")
+        self.assertIsNone(result["path_impact"])
+        self.assertIn("path-impact prerequisites are incomplete; no path queries were run", result["missing_evidence"])
+
+    def test_incomplete_section_coverage_is_reported_and_never_yields_a_delta(self):
+        testudo = _PathTestudo(_rows())
+        testudo.delay_complete = False
+        result = ScenarioImpactWorkflow(
+            testudo, _Matcher({"status": "matched", "scenario_id": "2", "model_match_score": 0.9})
+        ).analyze("Compare Roadworks North", intervals=[1], requested_profile="path_impact")
+        path = result["path_impact"]["paths"][0]
+        self.assertEqual(result["analysis_status"], "partial")
+        self.assertEqual(path["section_delay_rollups"][0]["current"]["coverage"], 0.5)
+        self.assertIsNone(path["section_delay_rollups"][0]["delta"])
+        self.assertIn("complete section-delay coverage for path 500 interval 1", result["missing_evidence"])
 
     def test_same_interval_id_with_different_absolute_window_is_not_compared(self):
         rows = _rows()

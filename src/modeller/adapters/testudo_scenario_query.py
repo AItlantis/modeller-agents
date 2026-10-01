@@ -63,6 +63,86 @@ class TestudoScenarioQueryClient:
             params["intervals"] = ",".join(map(str, intervals))
         return self._get("metrics", params)
 
+    def subpath_crosswalk(self, scenario_id: int) -> Mapping[str, Any]:
+        """Read package-verified Aimsun subpath to path/OD identities."""
+        self._validate_scenario_id(scenario_id)
+        return self._get_scoped_read(
+            f"/api/v1/view/{urllib.parse.quote(self.config.version_id, safe='')}/path-api/subpaths/crosswalk",
+            {"scid": str(scenario_id)},
+        )
+
+    def od_routes(
+        self,
+        scenario_id: int,
+        origin: int,
+        destination: int,
+        *,
+        vehicle: int | None = None,
+        interval: int | None = None,
+    ) -> Mapping[str, Any]:
+        """Read route assignments for one OD pair from the selected scenario."""
+        self._validate_scenario_id(scenario_id)
+        self._validate_nonnegative_id(origin, "origin")
+        self._validate_nonnegative_id(destination, "destination")
+        if vehicle is not None:
+            self._validate_nonnegative_id(vehicle, "vehicle")
+        if interval is not None:
+            self._validate_nonnegative_id(interval, "interval")
+        version = urllib.parse.quote(self.config.version_id, safe="")
+        endpoint = f"/api/v1/view/{version}/path-api/od/{origin}/{destination}/routes"
+        params = {"scid": str(scenario_id)}
+        if vehicle is not None:
+            params["vehicle"] = str(vehicle)
+        if interval is not None:
+            params["interval"] = str(interval)
+        return self._get_scoped_read(endpoint, params)
+
+    def path_delay(
+        self,
+        scenario_id: int,
+        section_ids: list[int],
+        interval: int,
+    ) -> Mapping[str, Any]:
+        """Read exact-interval delay sum for an ordered path section sequence."""
+        self._validate_scenario_id(scenario_id)
+        if (not section_ids or len(section_ids) > 500
+                or any(isinstance(value, bool) or not isinstance(value, int) or value < 0
+                       for value in section_ids)):
+            raise ScenarioQueryError("section_ids must contain 1 to 500 non-negative integer IDs")
+        self._validate_nonnegative_id(interval, "interval")
+        version = urllib.parse.quote(self.config.version_id, safe="")
+        endpoint = f"/api/v1/view/{version}/result-api/api/v1/env/kpi/path-delay"
+        return self._get_scoped_read(endpoint, {
+            "scid": str(scenario_id),
+            "section_ids": ",".join(map(str, section_ids)),
+            "ent": str(interval),
+        })
+
+    def subpath_metrics(
+        self,
+        scenario_id: int,
+        subpath_ids: list[int],
+        intervals: list[int],
+    ) -> Mapping[str, Any]:
+        """Read observed subpath journey-time rows for exact intervals."""
+        self._validate_scenario_id(scenario_id)
+        if (not subpath_ids or len(subpath_ids) > 1000
+                or any(isinstance(value, bool) or not isinstance(value, int) or value < 0
+                       for value in subpath_ids)):
+            raise ScenarioQueryError("subpath_ids must contain 1 to 1000 non-negative integer IDs")
+        if (not intervals or len(intervals) > 120
+                or any(isinstance(value, bool) or not isinstance(value, int) or value < 0
+                       for value in intervals)):
+            raise ScenarioQueryError("intervals must contain 1 to 120 non-negative integer IDs")
+        version = urllib.parse.quote(self.config.version_id, safe="")
+        endpoint = f"/api/v1/view/{version}/result-api/api/v1/env/kpi/subpath"
+        return self._get_scoped_read(endpoint, {
+            "scid": str(scenario_id),
+            "oids": ",".join(map(str, subpath_ids)),
+            "ent_values": ",".join(map(str, intervals)),
+            "fields": "journey_time,count",
+        })
+
     def _get(self, endpoint: str, params: Mapping[str, str] | None = None) -> Mapping[str, Any]:
         if endpoint not in {"catalog", "metrics"}:
             raise ScenarioQueryError("unsupported scenario query")
@@ -71,6 +151,13 @@ class TestudoScenarioQueryClient:
         url = f"{prefix}/api/v1/view/{encoded_version}/scenario-analysis/{endpoint}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
+        return self._request(url, require_version_id=True)
+
+    def _get_scoped_read(self, endpoint: str, params: Mapping[str, str]) -> Mapping[str, Any]:
+        url = self.config.base_url.rstrip("/") + endpoint + "?" + urllib.parse.urlencode(params)
+        return self._request(url, require_version_id=False)
+
+    def _request(self, url: str, *, require_version_id: bool) -> Mapping[str, Any]:
         headers = {"Accept": "application/json", "Authorization": f"Bearer {self.config.capability_token}"}
         request = urllib.request.Request(url, headers=headers, method="GET")
         try:
@@ -84,9 +171,21 @@ class TestudoScenarioQueryClient:
             decoded = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ScenarioQueryError("Testudo returned invalid JSON") from exc
-        if not isinstance(decoded, Mapping) or decoded.get("version_id") != self.config.version_id:
+        if (not isinstance(decoded, Mapping)
+                or (require_version_id and decoded.get("version_id") != self.config.version_id)
+                or (decoded.get("version_id") is not None and decoded.get("version_id") != self.config.version_id)):
             raise ScenarioQueryError("Testudo returned a response for a different package version")
         return decoded
+
+    @staticmethod
+    def _validate_scenario_id(scenario_id: int) -> None:
+        if isinstance(scenario_id, bool) or not isinstance(scenario_id, int) or scenario_id < 0:
+            raise ScenarioQueryError("scenario_id must be a non-negative integer")
+
+    @staticmethod
+    def _validate_nonnegative_id(value: int, name: str) -> None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ScenarioQueryError(f"{name} must be a non-negative integer")
 
 
 def _is_loopback(hostname: str | None) -> bool:

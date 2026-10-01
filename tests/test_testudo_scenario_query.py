@@ -55,6 +55,41 @@ class ScenarioQueryTests(unittest.TestCase):
         with self.assertRaises(ScenarioQueryError):
             client.metrics([True])
 
+    def test_path_and_subpath_reads_are_version_scoped_gets_and_preserve_order(self):
+        seen = []
+
+        def opener(request, timeout):
+            seen.append((request.method, request.full_url))
+            return _Response({"available": True, "rows": []})
+
+        client = TestudoScenarioQueryClient(
+            ScenarioQueryConfig("https://testudo.example", "v1", "scoped", activation=True), opener=opener
+        )
+        client.subpath_crosswalk(12)
+        client.od_routes(12, 10, 20, vehicle=3, interval=4)
+        client.path_delay(12, [20, 10, 20], 7)
+        client.subpath_metrics(12, [700, 701], [7, 8])
+
+        self.assertTrue(all(method == "GET" for method, _url in seen))
+        self.assertTrue(seen[0][1].endswith("/path-api/subpaths/crosswalk?scid=12"))
+        self.assertIn("/path-api/od/10/20/routes?", seen[1][1])
+        self.assertIn("section_ids=20%2C10%2C20", seen[2][1])
+        self.assertIn("ent=7", seen[2][1])
+        self.assertIn("oids=700%2C701", seen[3][1])
+        self.assertIn("ent_values=7%2C8", seen[3][1])
+
+    def test_path_reads_reject_unbounded_or_mistyped_identifiers(self):
+        client = TestudoScenarioQueryClient(
+            ScenarioQueryConfig("https://testudo.example", "v1", "scoped", activation=True),
+            opener=lambda *_args, **_kwargs: _Response({"available": True}),
+        )
+        with self.assertRaises(ScenarioQueryError):
+            client.path_delay(1, [True], 1)
+        with self.assertRaises(ScenarioQueryError):
+            client.path_delay(1, list(range(501)), 1)
+        with self.assertRaises(ScenarioQueryError):
+            client.subpath_metrics(1, [5], [])
+
     def test_requires_explicit_activation_and_version_bound_response(self):
         with self.assertRaises(ValueError):
             TestudoScenarioQueryClient(ScenarioQueryConfig("https://testudo.example", "v1", "", activation=False))

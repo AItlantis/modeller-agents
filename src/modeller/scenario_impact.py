@@ -18,13 +18,14 @@ from modeller.adapters.testudo_scenario_query import (
     ScenarioQueryError,
     TestudoScenarioQueryClient,
 )
+from modeller.path_impact import execute_path_impact
 from modeller.scenario_controller import ScenarioAnalysisController
 
 METRICS = ("speed", "delay", "density")
 
 
 class ScenarioImpactWorkflow:
-    """Gather catalog-backed scenario and metric evidence without chat or mutations."""
+    """Gather catalog-backed scenario, metric, and gated path-impact evidence."""
 
     def __init__(
         self,
@@ -141,15 +142,28 @@ class ScenarioImpactWorkflow:
             "complete" if has_metrics and facts is not None
             and (not expects_baseline or bool(worsening["metrics"])) else "partial"
         )
-        # This workflow currently executes the overview metrics only. A deeper
-        # plan is returned for the next allowlisted executor and must not be
-        # represented as completed analysis here.
-        if analysis_plan.get("profile") != "overview":
-            status = "partial"
         missing_evidence = _missing_evidence(facts, current_rows, baseline_id, worsening)
+        path_impact = None
         if analysis_plan.get("profile") != "overview":
             missing_evidence.extend(analysis_plan.get("missing_evidence", []))
-            missing_evidence.append("deeper analysis profile steps have not been executed")
+            if analysis_plan.get("profile") == "path_impact" and analysis_plan.get("status") == "ready_to_execute":
+                path_impact = execute_path_impact(
+                    self._testudo,
+                    scenario_id=selected_id,
+                    baseline_scenario_id=baseline_id or "",
+                    interventions=facts.get("interventions", []) if facts else [],
+                    metric_rows=rows,
+                    requested_intervals=intervals,
+                )
+                missing_evidence.extend(path_impact.get("missing_evidence", []))
+                if path_impact.get("status") != "complete":
+                    status = "partial"
+            elif analysis_plan.get("profile") == "od_time_series":
+                status = "partial"
+                missing_evidence.append("OD time-series execution is not implemented")
+            else:
+                status = "partial"
+                missing_evidence.append("path-impact prerequisites are incomplete; no path queries were run")
         return {
             "analysis_status": status,
             "analysis_plan": analysis_plan,
@@ -172,6 +186,7 @@ class ScenarioImpactWorkflow:
                 for value in item.get("affected_path_ids", [])
             }),
             "path_references": catalog.get("path_references"),
+            "path_impact": path_impact,
             "match_method": decision.get("method", "ollaya_typed_choice"),
             "model_match_score": decision.get("model_match_score"),
             "score_label": "model match score",

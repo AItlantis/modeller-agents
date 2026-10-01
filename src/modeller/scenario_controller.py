@@ -25,7 +25,10 @@ PROFILE_STEPS = {
     "path_impact": (
         "resolve_event_footprint",
         "query_affected_paths",
+        "resolve_subpath_path_od_identity",
         "aggregate_impacted_od_pairs",
+        "sum_section_delay_along_selected_paths",
+        "query_subpath_journey_times",
         "summarize_path_and_demand_coverage",
     ),
     "od_time_series": (
@@ -42,7 +45,10 @@ PROFILE_STEPS = {
 # package-version-scoped Testudo catalog. Missing keys are always false.
 PROFILE_CAPABILITIES = {
     "path_queries": "query_affected_paths",
+    "subpath_crosswalk": "resolve_subpath_path_od_identity",
     "od_pair_aggregation": "aggregate_impacted_od_pairs",
+    "path_delay_rollup": "sum_section_delay_along_selected_paths",
+    "subpath_metrics": "query_subpath_journey_times",
     "od_travel_time": "query_od_travel_time_and_delay",
     "od_interval_metrics": "align_same_od_clock_intervals",
 }
@@ -156,6 +162,9 @@ class ScenarioAnalysisController:
             "safety_rules": [
                 "Only query the selected scenario and its explicitly linked baseline.",
                 "Compare only identical OD IDs and exact absolute time windows.",
+                "Sum section delay only for the selected ordered path and one interval; compare baselines only on identical absolute time_window values and complete section coverage.",
+                "Do not label a section-delay sum as observed OD journey time.",
+                "Use subpath journey-time rows as observed travel-time evidence only after a verified subpath/path crosswalk.",
                 "Do not interpolate unmatched intervals or infer missing event facts.",
                 "Keep model suggestions separate from verified package facts and calculations.",
                 "Never execute a simulation or mutate package/model data.",
