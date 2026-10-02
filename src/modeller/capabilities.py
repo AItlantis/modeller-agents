@@ -12,6 +12,7 @@ CAPABILITY_SKILLS = {
     "pipeline-fix": "pipeline-fix",
     "pipeline-review": "pipeline-review",
     "pipeline-smoke": "pipeline-smoke",
+    "scenario-impact-analysis": "scenario-impact-analysis",
     "recon": "memory-recon",
     "orchestrate": "orchestrate",
     "review": "review",

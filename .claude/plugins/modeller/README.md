@@ -23,3 +23,4 @@ It intentionally does not include repository-local agents from Testudo, Aimsun P
 - `pipeline-fix`
 - `pipeline-review`
 - `pipeline-smoke`
+- `scenario-impact-analysis`
