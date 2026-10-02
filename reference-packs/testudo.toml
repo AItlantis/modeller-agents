@@ -15,3 +15,18 @@ central_skills = [
 
 local_agents_stay_in_source = true
 notes = "Testudo owns product cockpit, UI, permissions, visual context, task status, product audit, live chat turns, and package query authorization. modeller-agents scenario-impact-analysis is an optional read-only reusable workflow and never hosts chat or runs simulations."
+
+[scenario_impact_analysis]
+query_client = "modeller.adapters.testudo_scenario_query.TestudoScenarioQueryClient"
+matcher = "modeller.adapters.ollaya_scenario_match.OllayaScenarioMatcher"
+transport = "GET-only package-version-scoped scenario-analysis endpoints; never use a write or control-plane transport"
+match_threshold = 0.80
+match_margin = 0.15
+max_selected_paths = 1000
+max_od_pairs = 500
+max_intervals = 120
+crosswalk_identity = "Unique ordered section sequence plus origin, destination, and vehicle; duplicate identities are ambiguous and must not be collapsed into a delta."
+path_identifiers = "Authored affected_path_ids may refer to a subpath OID, external ID, stable route hash, or generated path-index route_id. A generated route_id is not an Aimsun subpath OID."
+path_delay = "Sum result delay for every ordered section occurrence in the selected path. Require complete section coverage and compare only identical ordered paths at the exact same absolute time_window. This is a derived section-metric rollup, not an OD journey time."
+od_journey_time = "MISUBPATH and MESUBPATH are observed subpath journey-time sources. Match unambiguous crosswalk identity and OD/vehicle, then compare only exact absolute time_window matches; never infer travel time from route assignment demand."
+ambiguity_policy = "If current or baseline crosswalk rows duplicate the selected identity, return partial evidence and issue no downstream route, delay, or OD metric queries for that ambiguous selection."

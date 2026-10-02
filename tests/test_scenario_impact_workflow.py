@@ -47,6 +47,7 @@ class _PathTestudo(_Testudo):
         self.delay_calls = []
         self.subpath_calls = []
         self.delay_complete = True
+        self.crosswalk_override = None
 
     def catalog(self):
         value = super().catalog()
@@ -62,6 +63,8 @@ class _PathTestudo(_Testudo):
 
     def subpath_crosswalk(self, scenario_id):
         self.crosswalk_calls.append(scenario_id)
+        if self.crosswalk_override is not None:
+            return {"available": True, "rows": self.crosswalk_override.get(scenario_id, [])}
         oid, rid = (500, 7) if scenario_id == 2 else (900, 11)
         return {"available": True, "rows": [{
             "subpath_oid": oid, "external_id": "path-5", "route_hash": "hash-5",
@@ -166,6 +169,97 @@ class ScenarioImpactWorkflowTests(unittest.TestCase):
         self.assertEqual(result["path_impact"]["affected_od_pairs"], [
             {"origin": 1, "destination": 2, "vehicle": 3},
         ])
+
+    def test_path_reference_matches_generated_route_id(self):
+        testudo = _PathTestudo(_rows())
+        catalog = testudo.catalog
+
+        def path_id_only_catalog():
+            value = catalog()
+            intervention = value["scenarios"][1]["analysis"]["interventions"][0]
+            intervention["affected_section_ids"] = []
+            intervention["affected_path_ids"] = [7]
+            return value
+
+        testudo.catalog = path_id_only_catalog
+        result = ScenarioImpactWorkflow(
+            testudo, _Matcher({"status": "matched", "scenario_id": "2", "model_match_score": 0.92})
+        ).analyze("Compare Roadworks North", intervals=[1], requested_profile="path_impact")
+        self.assertEqual(result["path_impact"]["status"], "complete")
+        self.assertEqual(testudo.route_calls[0], (2, 1, 2, 3, None))
+
+    def test_path_impact_stops_before_downstream_reads_when_path_cap_is_exceeded(self):
+        testudo = _PathTestudo(_rows())
+        testudo.crosswalk_override = {
+            2: [{"subpath_oid": index, "external_id": f"p-{index}", "route_hash": f"h-{index}",
+                 "section_ids": [10, 20], "match_status": "matched", "origin": 1,
+                 "destination": 2, "vehicle": 3, "route_ids": [index]} for index in range(1001)],
+            1: [],
+        }
+        result = ScenarioImpactWorkflow(
+            testudo, _Matcher({"status": "matched", "scenario_id": "2", "model_match_score": 0.92})
+        ).analyze("Compare Roadworks North", intervals=[1], requested_profile="path_impact")
+        self.assertEqual(result["path_impact"]["status"], "partial")
+        self.assertEqual(result["path_impact"]["selected_path_count"], 1001)
+        self.assertIn("1000-path query cap", result["path_impact"]["missing_evidence"][0])
+        self.assertEqual(testudo.route_calls, [])
+        self.assertEqual(testudo.delay_calls, [])
+        self.assertEqual(testudo.subpath_calls, [])
+
+    def test_path_impact_stops_before_downstream_reads_when_od_cap_is_exceeded(self):
+        testudo = _PathTestudo(_rows())
+        testudo.crosswalk_override = {
+            2: [{"subpath_oid": index, "external_id": f"p-{index}", "route_hash": f"h-{index}",
+                 "section_ids": [10, 20], "match_status": "matched", "origin": index,
+                 "destination": index + 1, "vehicle": 3, "route_ids": [index]} for index in range(501)],
+            1: [],
+        }
+        result = ScenarioImpactWorkflow(
+            testudo, _Matcher({"status": "matched", "scenario_id": "2", "model_match_score": 0.92})
+        ).analyze("Compare Roadworks North", intervals=[1], requested_profile="path_impact")
+        self.assertEqual(result["path_impact"]["status"], "partial")
+        self.assertEqual(result["path_impact"]["selected_od_pair_count"], 501)
+        self.assertIn("500-pair query cap", result["path_impact"]["missing_evidence"][0])
+        self.assertEqual(testudo.route_calls, [])
+        self.assertEqual(testudo.delay_calls, [])
+        self.assertEqual(testudo.subpath_calls, [])
+
+    def test_duplicate_current_path_identity_is_ambiguous_and_not_queried(self):
+        testudo = _PathTestudo(_rows())
+        duplicate = {"section_ids": [10, 20], "match_status": "matched", "origin": 1,
+                     "destination": 2, "vehicle": 3}
+        testudo.crosswalk_override = {
+            2: [dict(duplicate, subpath_oid=500, external_id="path-a", route_ids=[7]),
+                dict(duplicate, subpath_oid=501, external_id="path-b", route_ids=[8])],
+            1: [],
+        }
+        result = ScenarioImpactWorkflow(
+            testudo, _Matcher({"status": "matched", "scenario_id": "2", "model_match_score": 0.92})
+        ).analyze("Compare Roadworks North", intervals=[1], requested_profile="path_impact")
+        self.assertEqual(result["path_impact"]["status"], "partial")
+        self.assertEqual(result["path_impact"]["ambiguous_path_count"], 1)
+        self.assertEqual(testudo.route_calls, [])
+        self.assertEqual(testudo.delay_calls, [])
+        self.assertEqual(testudo.subpath_calls, [])
+
+    def test_duplicate_baseline_path_identity_is_ambiguous_and_not_queried(self):
+        testudo = _PathTestudo(_rows())
+        current = {"subpath_oid": 500, "external_id": "current", "route_hash": "current-hash",
+                   "section_ids": [10, 20], "match_status": "matched", "origin": 1,
+                   "destination": 2, "vehicle": 3, "route_ids": [7]}
+        baseline = {**current, "subpath_oid": 900, "external_id": "base-a", "route_hash": "base-a-hash",
+                    "route_ids": [11]}
+        second_baseline = {**baseline, "subpath_oid": 901, "external_id": "base-b",
+                           "route_hash": "base-b-hash", "route_ids": [12]}
+        testudo.crosswalk_override = {2: [current], 1: [baseline, second_baseline]}
+        result = ScenarioImpactWorkflow(
+            testudo, _Matcher({"status": "matched", "scenario_id": "2", "model_match_score": 0.92})
+        ).analyze("Compare Roadworks North", intervals=[1], requested_profile="path_impact")
+        self.assertEqual(result["path_impact"]["status"], "partial")
+        self.assertEqual(result["path_impact"]["ambiguous_path_count"], 1)
+        self.assertEqual(testudo.route_calls, [])
+        self.assertEqual(testudo.delay_calls, [])
+        self.assertEqual(testudo.subpath_calls, [])
 
     def test_path_impact_withholds_delta_when_absolute_windows_do_not_match(self):
         rows = _rows()

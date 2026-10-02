@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import math
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
 from modeller.adapters.testudo_scenario_query import ScenarioQueryError
+
+MAX_SELECTED_PATHS = 1000
+MAX_OD_PAIRS = 500
 
 
 def execute_path_impact(
@@ -44,6 +48,38 @@ def execute_path_impact(
     selected_paths = [row for row in current_rows if _is_affected(row, section_scope, path_scope)]
     if not selected_paths:
         return _partial(["affected path matched to an unambiguous subpath and OD identity"])
+
+    selected_od_pairs = {
+        (int(path["origin"]), int(path["destination"]), int(path["vehicle"]))
+        for path in selected_paths
+    }
+    if len(selected_paths) > MAX_SELECTED_PATHS or len(selected_od_pairs) > MAX_OD_PAIRS:
+        exceeded = []
+        if len(selected_paths) > MAX_SELECTED_PATHS:
+            exceeded.append(f"selected paths exceed the {MAX_SELECTED_PATHS}-path query cap")
+        if len(selected_od_pairs) > MAX_OD_PAIRS:
+            exceeded.append(f"selected OD pairs exceed the {MAX_OD_PAIRS}-pair query cap")
+        return {
+            **_partial(exceeded),
+            "selected_path_count": len(selected_paths),
+            "selected_od_pair_count": len(selected_od_pairs),
+            "query_limits": {"max_selected_paths": MAX_SELECTED_PATHS, "max_od_pairs": MAX_OD_PAIRS},
+        }
+
+    selected_identity_counts = Counter(_path_identity(path) for path in selected_paths)
+    baseline_identity_counts = Counter(_path_identity(path) for path in baseline_rows)
+    ambiguous_current = sum(count - 1 for count in selected_identity_counts.values() if count > 1)
+    ambiguous_baseline = sum(
+        baseline_identity_counts[identity] - 1
+        for identity in selected_identity_counts
+        if baseline_identity_counts[identity] > 1
+    )
+    if ambiguous_current or ambiguous_baseline:
+        return {
+            **_partial(["duplicate crosswalk identities make path-to-baseline matching ambiguous"]),
+            "selected_path_count": len(selected_paths),
+            "ambiguous_path_count": ambiguous_current + ambiguous_baseline,
+        }
 
     current_intervals, current_windows, interval_truncated, missing_current_intervals = _intervals_for(
         metric_rows, scenario_id, requested_intervals,
@@ -254,7 +290,10 @@ def _is_affected(row: Mapping[str, Any], sections: set[int], paths: set[str]) ->
     if sections.intersection(row["section_ids"]):
         return True
     # Path metadata may refer to a subpath object, external ID, or stable route hash.
-    references = {str(row.get("subpath_oid")), str(row.get("external_id") or ""), str(row.get("route_hash") or "")}
+    references = {str(row.get("subpath_oid")), str(row.get("external_id") or ""),
+                  str(row.get("route_hash") or ""),
+                  *(str(value) for value in row.get("route_ids", [])
+                    if isinstance(value, (str, int)) and not isinstance(value, bool))}
     return bool(paths.intersection(references))
 
 
