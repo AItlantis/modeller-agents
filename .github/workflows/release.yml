@@ -16,11 +16,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Check out tagged modeller-agents source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          # Build the exact commit that triggered this run. A movable tag must
+          # not change the source after GitHub has recorded the event SHA.
+          ref: ${{ github.sha }}
           path: modeller-agents
           persist-credentials: false
 
@@ -70,13 +75,34 @@ jobs:
           PYTHONPATH: src
 
       - name: Build and verify release wheel
+        id: build-wheel
         working-directory: modeller-agents
         run: |
           mkdir -p release-assets
           python -m build --no-isolation --wheel --outdir release-assets
-          cd release-assets
-          sha256sum *.whl > SHA256SUMS
-          sha256sum --check SHA256SUMS
+          mapfile -t wheels < <(find release-assets -maxdepth 1 -type f -name '*.whl' -print | sort)
+          if [[ "${#wheels[@]}" -ne 1 ]]; then
+            echo "Expected exactly one release wheel, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+          sha256sum "${wheels[0]}" > release-assets/SHA256SUMS
+          (cd release-assets && sha256sum --check SHA256SUMS)
+          echo "wheel-path=${wheels[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest the exact release wheel
+        id: attest-wheel
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ github.workspace }}/${{ steps.build-wheel.outputs.wheel-path }}
+
+      - name: Keep the Sigstore bundle with the release asset
+        working-directory: modeller-agents
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest-wheel.outputs.bundle-path }}
+          WHEEL_PATH: ${{ steps.build-wheel.outputs.wheel-path }}
+        run: |
+          wheel_name="$(basename "$WHEEL_PATH")"
+          cp "$ATTESTATION_BUNDLE" "release-assets/${wheel_name}.sigstore.json"
 
       - name: Pass verified assets to release job
         uses: actions/upload-artifact@v4
@@ -85,6 +111,7 @@ jobs:
           path: |
             modeller-agents/release-assets/*.whl
             modeller-agents/release-assets/SHA256SUMS
+            modeller-agents/release-assets/*.whl.sigstore.json
           retention-days: 1
           if-no-files-found: error
 
@@ -100,9 +127,55 @@ jobs:
           name: modeller-agents-release-${{ github.run_id }}-${{ github.run_attempt }}
           path: release-assets
 
+      - name: Check out the exact source used for this release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Verify downloaded wheel
         working-directory: release-assets
         run: sha256sum --check SHA256SUMS
+
+      - name: Verify wheel signature and GitHub provenance
+        working-directory: release-assets
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_TAG: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          mapfile -t wheels < <(find . -maxdepth 1 -type f -name '*.whl' -print | sort)
+          mapfile -t bundles < <(find . -maxdepth 1 -type f -name '*.whl.sigstore.json' -print | sort)
+          [[ "${#wheels[@]}" -eq 1 ]] || { echo "Expected one wheel, found ${#wheels[@]}" >&2; exit 1; }
+          [[ "${#bundles[@]}" -eq 1 ]] || { echo "Expected one wheel provenance bundle, found ${#bundles[@]}" >&2; exit 1; }
+          wheel="${wheels[0]}"
+          bundle="${bundles[0]}"
+          [[ "$(basename "$bundle")" == "$(basename "$wheel").sigstore.json" ]]
+          gh attestation verify "$wheel" \
+            --bundle "$bundle" \
+            --repo "$SOURCE_REPOSITORY" \
+            --signer-workflow "$SOURCE_REPOSITORY/.github/workflows/release.yml" \
+            --source-digest "$SOURCE_SHA"
+          python ../source/tools/verify_release_attestation.py \
+            --wheel "$wheel" \
+            --bundle "$bundle" \
+            --source-repository "$SOURCE_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" \
+            --source-ref "$SOURCE_REF" \
+            --source-tag "$SOURCE_TAG" \
+            --workflow-path .github/workflows/release.yml \
+            --server-url "$SERVER_URL" \
+            --run-id "$RUN_ID" \
+            --run-attempt "$RUN_ATTEMPT"
 
       - name: Create a draft release with the verified wheel and checksum
         env:
@@ -113,6 +186,6 @@ jobs:
             echo "A release already exists for $RELEASE_TAG; refusing to replace its assets." >&2
             exit 1
           fi
-          gh release create "$RELEASE_TAG" release-assets/*.whl release-assets/SHA256SUMS \
+          gh release create "$RELEASE_TAG" release-assets/*.whl release-assets/SHA256SUMS release-assets/*.whl.sigstore.json \
             --draft --verify-tag --title "$RELEASE_TAG" \
-            --notes "Verified modeller-agents wheel from $RELEASE_TAG. Review SHA256SUMS before publishing."
+            --notes "Verified modeller-agents wheel from $RELEASE_TAG. SHA256SUMS and the per-wheel Sigstore provenance bundle are attached."
