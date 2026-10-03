@@ -1,0 +1,135 @@
+name: Release wheel attestation smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modeller-agents-attestation-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    # The smoke workflow validates the merged release code on main. It never
+    # runs against a tag and has no release-writing permission.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Check out the exact source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: modeller-agents
+          persist-credentials: false
+
+      - name: Check out modeller-pipelines contract v1.2
+        uses: actions/checkout@v4
+        with:
+          repository: AItlantis/modeller-pipelines
+          ref: dbd00cb1299f3f68add0e5971e6ec808f010059d
+          path: modeller-pipelines
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install validation and build dependencies
+        run: >-
+          python -m pip install
+          pytest==8.3.5 PyYAML==6.0.2 build==1.2.2 hatchling==1.27.0
+
+      - name: Run test suite
+        working-directory: modeller-agents
+        run: python -m pytest -q
+
+      - name: Run advisory doctor
+        working-directory: modeller-agents
+        run: python -m modeller.cli doctor --root . --json
+        env:
+          PYTHONPATH: src
+
+      - name: Build one wheel and checksum
+        id: build-wheel
+        working-directory: modeller-agents
+        run: |
+          mkdir -p smoke-assets
+          python -m build --no-isolation --wheel --outdir smoke-assets
+          mapfile -t wheels < <(find smoke-assets -maxdepth 1 -type f -name '*.whl' -print | sort)
+          if [[ "${#wheels[@]}" -ne 1 ]]; then
+            echo "Expected exactly one wheel, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+          sha256sum "${wheels[0]}" > smoke-assets/SHA256SUMS
+          (cd smoke-assets && sha256sum --check SHA256SUMS)
+          echo "wheel-path=modeller-agents/${wheels[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest the exact smoke wheel
+        id: attest-wheel
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ github.workspace }}/${{ steps.build-wheel.outputs.wheel-path }}
+
+      - name: Keep the Sigstore bundle with smoke evidence
+        working-directory: modeller-agents
+        env:
+          ATTESTATION_BUNDLE: ${{ steps.attest-wheel.outputs.bundle-path }}
+          WHEEL_PATH: ${{ steps.build-wheel.outputs.wheel-path }}
+        run: |
+          wheel_name="$(basename "$WHEEL_PATH")"
+          cp "$ATTESTATION_BUNDLE" "smoke-assets/${wheel_name}.sigstore.json"
+
+      - name: Verify wheel signature and exact run
+        working-directory: modeller-agents
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          mapfile -t wheels < <(find smoke-assets -maxdepth 1 -type f -name '*.whl' -print | sort)
+          mapfile -t bundles < <(find smoke-assets -maxdepth 1 -type f -name '*.whl.sigstore.json' -print | sort)
+          [[ "${#wheels[@]}" -eq 1 ]] || { echo "Expected one wheel, found ${#wheels[@]}" >&2; exit 1; }
+          [[ "${#bundles[@]}" -eq 1 ]] || { echo "Expected one attestation bundle, found ${#bundles[@]}" >&2; exit 1; }
+          wheel="${wheels[0]}"
+          bundle="${bundles[0]}"
+          [[ "$(basename "$bundle")" == "$(basename "$wheel").sigstore.json" ]]
+          gh attestation verify "$wheel" \
+            --bundle "$bundle" \
+            --repo "$SOURCE_REPOSITORY" \
+            --signer-workflow "$SOURCE_REPOSITORY/.github/workflows/release-attestation-smoke.yml" \
+            --source-digest "$SOURCE_SHA"
+          python tools/verify_release_attestation.py \
+            --wheel "$wheel" \
+            --bundle "$bundle" \
+            --source-repository "$SOURCE_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" \
+            --source-ref "$SOURCE_REF" \
+            --workflow-path .github/workflows/release-attestation-smoke.yml \
+            --server-url "$SERVER_URL" \
+            --run-id "$RUN_ID" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --allow-branch-ref
+          sha256sum "$wheel" >> "$GITHUB_STEP_SUMMARY"
+          printf '\nVerified source: `%s`\nRun attempt: `%s/%s`\n' \
+            "$SOURCE_SHA" "$RUN_ID" "$RUN_ATTEMPT" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload wheel and attestation smoke evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: modeller-agents-attestation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            modeller-agents/smoke-assets/*.whl
+            modeller-agents/smoke-assets/SHA256SUMS
+            modeller-agents/smoke-assets/*.whl.sigstore.json
+          retention-days: 7
+          if-no-files-found: error

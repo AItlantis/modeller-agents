@@ -1,8 +1,9 @@
-"""Validate the GitHub SLSA statement bundled beside a modeller-agents wheel.
+"""Validate a GitHub SLSA statement bundled beside a modeller-agents wheel.
 
 The caller must run ``gh attestation verify`` first. This script checks the
-verified statement's subject digest and release invocation against the exact
-workflow run that is publishing the assets.
+verified statement's subject digest and invocation against the exact workflow
+run that produced the assets. Release mode requires an immutable version tag;
+smoke mode can explicitly allow a branch ref and never publishes a release.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ def verify_release_attestation(
     server_url: str,
     run_id: str,
     run_attempt: str,
+    allow_branch_ref: bool = False,
 ) -> None:
     """Raise ``ValueError`` unless the statement binds this wheel to this run."""
     statement = _load_statement(bundle_path)
@@ -102,7 +104,10 @@ def verify_release_attestation(
     )
     if metadata.get("invocationId") != expected_invocation:
         raise ValueError("provenance invocation ID does not match this exact CI run attempt")
-    if not source_tag or source_ref != f"refs/tags/{source_tag}":
+    if allow_branch_ref:
+        if source_tag or not source_ref.startswith("refs/heads/"):
+            raise ValueError("smoke source ref must be a branch ref with no release tag")
+    elif not source_tag or source_ref != f"refs/tags/{source_tag}":
         raise ValueError("release source ref is not the expected immutable tag event")
 
 
@@ -113,11 +118,16 @@ def main() -> int:
     parser.add_argument("--source-repository", required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--source-ref", required=True)
-    parser.add_argument("--source-tag", required=True)
+    parser.add_argument("--source-tag", default="")
     parser.add_argument("--workflow-path", required=True)
     parser.add_argument("--server-url", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--run-attempt", required=True)
+    parser.add_argument(
+        "--allow-branch-ref",
+        action="store_true",
+        help="allow branch refs for the non-publishing manual attestation smoke workflow",
+    )
     args = parser.parse_args()
     try:
         verify_release_attestation(
@@ -131,6 +141,7 @@ def main() -> int:
             server_url=args.server_url,
             run_id=args.run_id,
             run_attempt=args.run_attempt,
+            allow_branch_ref=args.allow_branch_ref,
         )
     except (OSError, ValueError) as exc:
         print(f"release attestation verification failed: {exc}", file=sys.stderr)

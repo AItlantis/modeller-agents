@@ -29,6 +29,15 @@ AItlantis/modeller-agents/.github/workflows/release.yml --source-digest
 before publishing and validates the SLSA `invocationId` against
 `<run ID>/<run attempt>`.
 
+After the attestation workflow is merged, maintainers can run **Release wheel
+attestation smoke** from the Actions tab on `main`. It builds and attests the
+wheel from that exact commit, verifies the signature, workflow, source, and run
+attempt, then uploads the wheel, checksum, and Sigstore bundle as a short-lived
+Actions artifact. This manual workflow has no release-writing permission and
+never creates or updates a GitHub Release. Its verifier permits a branch ref
+only when the smoke workflow explicitly passes `--allow-branch-ref`; the
+versioned release workflow continues to require a `v*` tag.
+
 Artifact Attestations require `id-token: write`, `attestations: write`, and
 `artifact-metadata: write` on the wheel-build job. The release job receives
 only `contents: write` so it can create the draft release; it does not mint an
