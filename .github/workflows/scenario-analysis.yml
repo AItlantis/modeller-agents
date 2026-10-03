@@ -1,0 +1,41 @@
+name: Scenario analysis CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  scenario-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest PyYAML
+
+      - name: Compile application and focused tests
+        run: >-
+          python -m compileall -q src/modeller
+          tests/test_ollaya_scenario_match.py
+          tests/test_scenario_controller.py
+          tests/test_scenario_impact_workflow.py
+          tests/test_testudo_scenario_query.py
+
+      - name: Run scenario analysis tests
+        run: >-
+          python -m pytest -q
+          tests/test_ollaya_scenario_match.py
+          tests/test_scenario_controller.py
+          tests/test_scenario_impact_workflow.py
+          tests/test_testudo_scenario_query.py
