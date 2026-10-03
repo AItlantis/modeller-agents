@@ -7,10 +7,12 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 import modeller.install as install_mod
 from modeller.backend import check_backend
 from modeller.cli import main
+from modeller.knowledge_packs import VaultExports
 from modeller.doctor import (
     CAPABILITY_SKILLS,
     DoctorResult,
@@ -24,18 +26,45 @@ from modeller.readiness import build_readiness_report
 from modeller.run import run_backend_pipeline, validate_backend_json, validate_result_json
 from modeller.route import route_envelope
 from modeller.sync import plan_sync
+from modeller.toml_compat import load_toml
 from modeller.workflow import advance_workflow, check_current_step, complete_artifact, init_workflow, load_state
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _synthetic_accessibility_vault_exports() -> VaultExports:
+    """Return a non-authoritative disabled-domain export for consumer tests."""
+    domain = json.loads(
+        (ROOT / "tests/fixtures/synthetic-accessibility-vault-domain.json").read_text(encoding="utf-8")
+    )
+    pack = load_toml(ROOT / "reference-packs/domains/accessibility.toml")
+    domain["allowed_note_types"] = ["reference"]
+    domain["notes_digest"] = pack["source_domain_notes_digest"]
+    notes = [
+        {
+            "id": note["id"],
+            "domain": pack["domain"],
+            "status": "accepted",
+            "exposable": True,
+            "exposure_scopes": pack["required_scopes"],
+            "sensitivity": "public",
+            "type": "reference",
+        }
+        for note in pack["notes"]
+    ]
+    return VaultExports(
+        index={"notes": notes},
+        domains={"index_digest": pack["source_domains_digest"], "domains": [domain]},
+    )
+
+
 class DoctorCliTests(unittest.TestCase):
     def test_doctor_warns_about_deactivated_domain_on_current_repo(self) -> None:
-        # F-A: domain routability is intentionally disabled in the vault and
-        # mirrored locally as draft/routable:false. Normal doctor should accept
-        # that development state while keeping the disabled axis visible.
-        result = run_doctor(ROOT)
+        # A sanitized synthetic export exercises the disabled-domain warning
+        # without requiring the private modelling-knowledge checkout.
+        with patch("modeller.doctor.load_vault_exports", return_value=_synthetic_accessibility_vault_exports()):
+            result = run_doctor(ROOT)
 
         self.assertTrue(result.ok, result.format())
         self.assertTrue(
@@ -135,11 +164,12 @@ class DoctorCliTests(unittest.TestCase):
         self.assertIn("strict readiness", output)
 
     def test_doctor_cli_json_is_machine_readable(self) -> None:
-        # The disabled knowledge axis is a normal development warning, while
-        # this test still verifies the JSON payload shape.
+        # Keep the payload shape and disabled-domain warning covered with the
+        # sanitized synthetic export.
         stdout = StringIO()
         with redirect_stdout(stdout):
-            exit_code = main(["--root", str(ROOT), "doctor", "--json"])
+            with patch("modeller.doctor.load_vault_exports", return_value=_synthetic_accessibility_vault_exports()):
+                exit_code = main(["--root", str(ROOT), "doctor", "--json"])
         self.assertEqual(exit_code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertTrue(payload["ok"])
@@ -152,13 +182,14 @@ class DoctorCliTests(unittest.TestCase):
         )
 
     def test_modeller_agents_compat_cli_json_is_machine_readable(self) -> None:
-        # The compat CLI delegates to the same normal doctor; disabled domains
-        # remain warnings, not structural errors.
+        # The compat CLI delegates to the same doctor behavior using the
+        # sanitized synthetic export.
         from modeller_agents.cli import main as compat_main
 
         stdout = StringIO()
         with redirect_stdout(stdout):
-            exit_code = compat_main(["--root", str(ROOT), "doctor", "--json"])
+            with patch("modeller.doctor.load_vault_exports", return_value=_synthetic_accessibility_vault_exports()):
+                exit_code = compat_main(["--root", str(ROOT), "doctor", "--json"])
 
         self.assertEqual(exit_code, 0)
         payload = json.loads(stdout.getvalue())
@@ -310,15 +341,20 @@ class DoctorCliTests(unittest.TestCase):
                     {
                         "backend_id": "bad backend id",
                         "contract_version": "1.0",
-                        "runner": {"command": [], "interpreter": "system-python", "platform": []},
-                        "pipelines": [],
+                        "runner": {"command": ["python"], "interpreter": "system-python", "platform": ["any"]},
+                        "pipelines": [{"id": "smoke", "definition": "pipelines/smoke.yml"}],
                     }
                 ),
                 encoding="utf-8",
             )
             result = validate_backend_json(manifest, root=ROOT)
             self.assertFalse(result.ok)
-            self.assertTrue(any("schema" in error for error in result.errors), result.errors)
+            self.assertIsNotNone(result.schema_path, result.errors)
+            schema_errors = [error for error in result.errors if error.startswith("schema ")]
+            self.assertTrue(
+                any("$.backend_id" in error for error in schema_errors),
+                result.errors,
+            )
 
     def test_install_dry_run_records_actions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -441,13 +477,14 @@ class DoctorCliTests(unittest.TestCase):
             self.assertTrue((target / ".modeller/runtime/backends.toml").exists())
 
     def test_doctor_warns_about_deactivated_domain_on_installed_runtime_target(self) -> None:
-        # Installed runtime assets carry the same mirrored disabled domain
-        # state, which should be visible as a warning but not fail doctor.
+        # Installed runtime assets retain disabled-domain warning behavior
+        # without requiring a private sibling repository.
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp)
             install_plugin(ROOT, target, dry_run=False, include_runtime_assets=True)
 
-            result = run_doctor(target)
+            with patch("modeller.doctor.load_vault_exports", return_value=_synthetic_accessibility_vault_exports()):
+                result = run_doctor(target)
 
             self.assertTrue(result.ok, result.format())
             self.assertTrue(

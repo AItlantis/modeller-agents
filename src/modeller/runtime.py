@@ -91,12 +91,23 @@ def discover_workspace_source_roots(root: Path, target_repository: str) -> list[
     target = str(target_repository or "").strip()
     if not target:
         return []
-    root = root.resolve()
+    try:
+        root = root.resolve()
+    except OSError:
+        return []
     candidates: list[Path] = []
     for anchor in _bounded_workspace_anchors(root):
         candidates.append(anchor / target)
-        if anchor.exists():
-            candidates.extend(child / target for child in anchor.iterdir() if child.is_dir())
+        try:
+            children = list(anchor.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            try:
+                if child.is_dir():
+                    candidates.append(child / target)
+            except OSError:
+                continue
     resolved = []
     seen = set()
     for candidate in candidates:
@@ -107,7 +118,11 @@ def discover_workspace_source_roots(root: Path, target_repository: str) -> list[
         if candidate in seen:
             continue
         seen.add(candidate)
-        if _looks_like_source_root(candidate, target):
+        try:
+            is_source_root = _looks_like_source_root(candidate, target)
+        except OSError:
+            continue
+        if is_source_root:
             resolved.append(candidate)
     return resolved
 
@@ -131,6 +146,9 @@ def _bounded_workspace_anchors(root: Path) -> list[Path]:
 
 
 def _looks_like_source_root(path: Path, target_repository: str) -> bool:
-    if not path.is_dir() or path.name != target_repository:
+    try:
+        if not path.is_dir() or path.name != target_repository:
+            return False
+        return (path / ".git").exists() or (path / "README.md").exists() or is_installed_runtime(path)
+    except OSError:
         return False
-    return (path / ".git").exists() or (path / "README.md").exists() or is_installed_runtime(path)

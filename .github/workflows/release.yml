@@ -1,0 +1,118 @@
+name: Release modeller-agents wheel
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modeller-agents-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tagged modeller-agents source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          path: modeller-agents
+          persist-credentials: false
+
+      - name: Check out modeller-pipelines contract v1.2
+        uses: actions/checkout@v4
+        with:
+          repository: AItlantis/modeller-pipelines
+          ref: dbd00cb1299f3f68add0e5971e6ec808f010059d
+          path: modeller-pipelines
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify release tag matches project version
+        working-directory: modeller-agents
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          expected = f"v{project['version']}"
+          actual = os.environ["RELEASE_TAG"]
+          if actual != expected:
+              raise SystemExit(f"release tag {actual!r} does not match pyproject.toml ({expected!r})")
+          print(f"Verified release tag {actual}")
+          PY
+
+      - name: Install validation and build dependencies
+        run: >-
+          python -m pip install
+          pytest==8.3.5 PyYAML==6.0.2 build==1.2.2 hatchling==1.27.0
+
+      - name: Run test suite
+        working-directory: modeller-agents
+        run: python -m pytest -q
+
+      - name: Run advisory doctor
+        working-directory: modeller-agents
+        run: python -m modeller.cli doctor --root . --json
+        env:
+          PYTHONPATH: src
+
+      - name: Build and verify release wheel
+        working-directory: modeller-agents
+        run: |
+          mkdir -p release-assets
+          python -m build --no-isolation --wheel --outdir release-assets
+          cd release-assets
+          sha256sum *.whl > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+      - name: Pass verified assets to release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: modeller-agents-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            modeller-agents/release-assets/*.whl
+            modeller-agents/release-assets/SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error
+
+  create-draft-release:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified assets
+        uses: actions/download-artifact@v4
+        with:
+          name: modeller-agents-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-assets
+
+      - name: Verify downloaded wheel
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS
+
+      - name: Create a draft release with the verified wheel and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "A release already exists for $RELEASE_TAG; refusing to replace its assets." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" release-assets/*.whl release-assets/SHA256SUMS \
+            --draft --verify-tag --title "$RELEASE_TAG" \
+            --notes "Verified modeller-agents wheel from $RELEASE_TAG. Review SHA256SUMS before publishing."

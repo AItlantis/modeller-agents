@@ -1,0 +1,149 @@
+{
+  "base_exports": {
+    "domains": {
+      "index_digest": "synthetic-domains",
+      "domains": [
+        {
+          "status": "active",
+          "allowed_note_types": [
+            "reference",
+            "how-to"
+          ],
+          "routable": true,
+          "id": "accessibility",
+          "notes_digest": "synthetic-notes"
+        }
+      ]
+    },
+    "index": {
+      "notes": [
+        {
+          "status": "accepted",
+          "sensitivity": "public",
+          "exposure_scopes": [
+            "internal-agent",
+            "external"
+          ],
+          "id": "accessibility-workflow",
+          "domain": "accessibility",
+          "exposable": true,
+          "type": "reference",
+          "canonical_path": "domains/accessibility/workflow.md"
+        }
+      ],
+      "index_digest": "synthetic-index"
+    }
+  },
+  "synthetic_cases": [
+    {
+      "id": "synthetic-superseded-accessibility-note-ineligible",
+      "applies_to": [
+        "vault_doctor",
+        "modeller-agents"
+      ],
+      "domain": "accessibility",
+      "note_id": "synthetic-accessibility-superseded-note",
+      "required_scopes": [
+        "internal-agent"
+      ],
+      "max_sensitivity": "public",
+      "expected": false,
+      "reason": "A formerly accepted accessibility note with superseded status and superseded_by set must not be eligible for a knowledge pack.",
+      "synthetic_domain_overrides": {
+        "status": "active",
+        "routable": true
+      },
+      "synthetic_note": {
+        "aliases": [],
+        "authority_level": "authoritative",
+        "canonical_path": "domains/accessibility/synthetic-superseded-note.md",
+        "domain": "accessibility",
+        "exposable": true,
+        "exposure_scopes": [
+          "internal-agent",
+          "external"
+        ],
+        "id": "synthetic-accessibility-superseded-note",
+        "last_reviewed": "2026-07-12",
+        "owner": "modelling-knowledge",
+        "previous_paths": [],
+        "refresh_state": "current",
+        "sensitivity": "public",
+        "status": "superseded",
+        "superseded_by": "accessibility-workflow",
+        "title": "Synthetic Superseded Accessibility Note",
+        "type": "how-to"
+      }
+    },
+    {
+      "id": "synthetic-moved-accessibility-note-previous-path-eligible",
+      "applies_to": [
+        "vault_doctor",
+        "modeller-agents"
+      ],
+      "domain": "accessibility",
+      "note_id": "synthetic-accessibility-moved-note",
+      "required_scopes": [
+        "internal-agent"
+      ],
+      "max_sensitivity": "public",
+      "expected": true,
+      "reason": "A moved note keeps the same stable id and remains eligible when previous_paths records the old location.",
+      "synthetic_domain_overrides": {
+        "status": "active",
+        "routable": true
+      },
+      "synthetic_note": {
+        "aliases": [],
+        "authority_level": "authoritative",
+        "canonical_path": "domains/accessibility/synthetic-moved-note.md",
+        "domain": "accessibility",
+        "exposable": true,
+        "exposure_scopes": [
+          "internal-agent",
+          "external"
+        ],
+        "id": "synthetic-accessibility-moved-note",
+        "last_reviewed": "2026-07-12",
+        "owner": "modelling-knowledge",
+        "previous_paths": [
+          "domains/accessibility/old-synthetic-moved-note.md"
+        ],
+        "refresh_state": "current",
+        "sensitivity": "public",
+        "status": "accepted",
+        "superseded_by": null,
+        "title": "Synthetic Moved Accessibility Note",
+        "type": "reference"
+      },
+      "redirect_assertion": {
+        "previous_path": "domains/accessibility/old-synthetic-moved-note.md",
+        "resolves_to_note_id": "synthetic-accessibility-moved-note"
+      }
+    },
+    {
+      "id": "synthetic-stale-domain-notes-digest-ineligible",
+      "applies_to": [
+        "modeller-agents"
+      ],
+      "domain": "accessibility",
+      "note_id": "accessibility-workflow",
+      "required_scopes": [
+        "internal-agent"
+      ],
+      "max_sensitivity": "public",
+      "expected": false,
+      "reason": "An otherwise valid active pack must fail agent-side currency validation when source_domain_notes_digest is stale for its own domain.",
+      "synthetic_domain_overrides": {
+        "status": "active",
+        "routable": true
+      },
+      "pack_overrides": {
+        "source_domain_notes_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expected_error_contains": "source_domain_notes_digest"
+    }
+  ],
+  "id": "modeller-agents-eligibility-synthetic",
+  "schema_version": 1
+}
