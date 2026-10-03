@@ -10,12 +10,40 @@ from pathlib import Path
 from modeller.knowledge_packs import VaultExports, validate_knowledge_pack
 from modeller.reference_packs import validate_reference_pack
 from modeller.route import route_envelope
+from modeller.toml_compat import load_toml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parent
 VAULT = WORKSPACE / "modelling-knowledge"
 SHARED_ELIGIBILITY_FIXTURE = VAULT / "docs" / "dev" / "fixtures" / "eligibility-conformance.json"
+LOCAL_SYNTHETIC_ELIGIBILITY_FIXTURE = ROOT / "tests" / "fixtures" / "eligibility-conformance-synthetic.json"
+
+
+def _synthetic_accessibility_vault_exports() -> VaultExports:
+    """Return a non-authoritative disabled-domain export for consumer tests."""
+    domain = json.loads(
+        (ROOT / "tests/fixtures/synthetic-accessibility-vault-domain.json").read_text(encoding="utf-8")
+    )
+    pack = load_toml(ROOT / "reference-packs/domains/accessibility.toml")
+    domain["allowed_note_types"] = ["reference"]
+    domain["notes_digest"] = pack["source_domain_notes_digest"]
+    notes = [
+        {
+            "id": note["id"],
+            "domain": pack["domain"],
+            "status": "accepted",
+            "exposable": True,
+            "exposure_scopes": pack["required_scopes"],
+            "sensitivity": "public",
+            "type": "reference",
+        }
+        for note in pack["notes"]
+    ]
+    return VaultExports(
+        index={"notes": notes},
+        domains={"index_digest": pack["source_domains_digest"], "domains": [domain]},
+    )
 
 
 class ReferencePackTests(unittest.TestCase):
@@ -258,11 +286,14 @@ class ReferencePackTests(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertTrue(any("superseded" in error for error in result.errors), result.errors)
 
-    def test_live_accessibility_pack_is_draft_warning_while_domain_deactivated(self) -> None:
-        # F-A: domain routability is intentionally disabled in the vault and
-        # mirrored locally as a draft pack. Pack validation should keep that
-        # state visible without treating it as structural corruption.
-        result = validate_knowledge_pack(ROOT, "reference-packs/domains/accessibility.toml")
+    def test_accessibility_pack_is_draft_warning_while_domain_deactivated(self) -> None:
+        # Keep the local pack's draft/deactivated behavior covered with a
+        # sanitized synthetic export, not private vault content.
+        result = validate_knowledge_pack(
+            ROOT,
+            "reference-packs/domains/accessibility.toml",
+            exports=_synthetic_accessibility_vault_exports(),
+        )
 
         self.assertTrue(result.ok, result.errors)
         self.assertEqual(result.status, "draft")
@@ -276,46 +307,45 @@ class ReferencePackTests(unittest.TestCase):
         )
 
     def test_shared_eligibility_conformance_fixture(self) -> None:
-        if not SHARED_ELIGIBILITY_FIXTURE.is_file():
-            self.skipTest("sibling modelling-knowledge shared eligibility fixture is not available")
-        index = json.loads((VAULT / "docs/dev/vault-index.json").read_text(encoding="utf-8"))
-        domains = json.loads((VAULT / "docs/dev/knowledge-domains.json").read_text(encoding="utf-8"))
-        exports = VaultExports(index=index, domains=domains)
-        domain_specs = {d["id"]: d for d in domains["domains"]}
-        fixture = json.loads(SHARED_ELIGIBILITY_FIXTURE.read_text(encoding="utf-8"))
-        skipped_live: list[str] = []
-        asserted_live = 0
-        for case in fixture["cases"]:
-            domain_spec = domain_specs.get(case["domain"], {})
-            # F-A deactivation tolerance: the live cases are routability-
-            # dependent, so when the live vault export marks the case's domain
-            # not active/routable (as accessibility now is), the expected
-            # result cannot hold. Record + continue rather than assert-fail or
-            # abort the whole test (self.skipTest would stop the synthetic
-            # cases from running too); keep the real assertion for
-            # active/routable domains.
-            if domain_spec.get("status") != "active" or domain_spec.get("routable") is not True:
-                skipped_live.append(
-                    f"{case['id']} (domain {case['domain']!r} not active/routable in vault export)"
-                )
-                continue
-            with self.subTest(case=case["id"]):
-                asserted_live += 1
-                with tempfile.TemporaryDirectory() as tmp:
-                    root = Path(tmp)
-                    _write_domain_registry(root)
-                    _write_conformance_pack(root, case, domain_spec, domains["index_digest"])
-                    result = validate_knowledge_pack(
-                        root, f"reference-packs/domains/{case['domain']}.toml", exports=exports
-                    )
-                    self.assertIs(result.ok, case["expected"], result.errors)
+        # Synthetic edge cases are checked in from the shared fixture so they
+        # always run in public CI without a private sibling vault checkout.
+        synthetic_fixture = json.loads(LOCAL_SYNTHETIC_ELIGIBILITY_FIXTURE.read_text(encoding="utf-8"))
+        base_index = synthetic_fixture["base_exports"]["index"]
+        base_domains = synthetic_fixture["base_exports"]["domains"]
 
-        for case in fixture.get("synthetic_cases", []):
-            if "modeller-agents" not in case.get("applies_to", []):
-                continue
+        if SHARED_ELIGIBILITY_FIXTURE.is_file():
+            index = json.loads((VAULT / "docs/dev/vault-index.json").read_text(encoding="utf-8"))
+            domains = json.loads((VAULT / "docs/dev/knowledge-domains.json").read_text(encoding="utf-8"))
+            exports = VaultExports(index=index, domains=domains)
+            domain_specs = {d["id"]: d for d in domains["domains"]}
+            fixture = json.loads(SHARED_ELIGIBILITY_FIXTURE.read_text(encoding="utf-8"))
+            for case in fixture["cases"]:
+                domain_spec = domain_specs.get(case["domain"], {})
+                # Live cases depend on current domain routability. Keep their
+                # assertion when the live export supports it; synthetic cases
+                # below run regardless of this sibling checkout.
+                if domain_spec.get("status") != "active" or domain_spec.get("routable") is not True:
+                    continue
+                with self.subTest(case=case["id"]):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        root = Path(tmp)
+                        _write_domain_registry(root)
+                        _write_conformance_pack(root, case, domain_spec, domains["index_digest"])
+                        result = validate_knowledge_pack(
+                            root, f"reference-packs/domains/{case['domain']}.toml", exports=exports
+                        )
+                        self.assertIs(result.ok, case["expected"], result.errors)
+
+        synthetic_cases = [
+            case
+            for case in synthetic_fixture["synthetic_cases"]
+            if "modeller-agents" in case.get("applies_to", [])
+        ]
+        self.assertTrue(synthetic_cases, "local synthetic eligibility fixture must exercise modeller-agents")
+        for case in synthetic_cases:
             with self.subTest(synthetic_case=case["id"]):
                 synth_exports, notes_digest, domains_index_digest = _build_synthetic_exports(
-                    index, domains, case
+                    base_index, base_domains, case
                 )
                 synth_domain_spec = {
                     d["id"]: d for d in synth_exports.domains["domains"]
